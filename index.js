@@ -2063,6 +2063,571 @@ app.delete("/friends/:friendId", requireAuth, async (req, res) => {
   }
 });
 
+// ===== SUBSCRIPTION ENDPOINTS =====
+
+// Helper function to get default features for a plan
+function getDefaultFeatures(plan) {
+  if (plan === "premium") {
+    return {
+      maxTrips: -1, // Illimité
+      maxCollaborators: -1, // Illimité
+      canExport: true,
+      cloudStorage: -1, // Illimité
+      hasAds: false,
+      prioritySupport: true,
+    };
+  }
+  // Free plan defaults
+  return {
+    maxTrips: 5,
+    maxCollaborators: 2,
+    canExport: false,
+    cloudStorage: 100, // MB
+    hasAds: true,
+    prioritySupport: false,
+  };
+}
+
+// Helper function to ensure user has a subscription (create free plan if not exists)
+async function ensureUserSubscription(userId) {
+  let subscription = await db.collection("subscriptions").findOne({ userId });
+
+  if (!subscription) {
+    // Create free subscription
+    const now = new Date();
+    subscription = {
+      userId,
+      plan: "free",
+      status: "active",
+      productId: "",
+      billingCycle: null,
+      startDate: now,
+      endDate: null,
+      autoRenew: false,
+      features: getDefaultFeatures("free"),
+      createdAt: now,
+      updatedAt: now,
+    };
+    const result = await db.collection("subscriptions").insertOne(subscription);
+    subscription._id = result.insertedId;
+  }
+
+  return subscription;
+}
+
+// GET /subscription - Récupérer l'abonnement de l'utilisateur connecté
+app.get("/subscription", requireAuth, async (req, res) => {
+  try {
+    const userId = String(req.user._id);
+    const subscription = await ensureUserSubscription(userId);
+
+    // Format response
+    const response = {
+      id: String(subscription._id),
+      userId: subscription.userId,
+      plan: subscription.plan,
+      status: subscription.status,
+      productId: subscription.productId,
+      billingCycle: subscription.billingCycle,
+      startDate: subscription.startDate,
+      endDate: subscription.endDate,
+      autoRenew: subscription.autoRenew,
+      cancelledAt: subscription.cancelledAt,
+      nextBillingDate: subscription.nextBillingDate,
+      features: subscription.features,
+      createdAt: subscription.createdAt,
+      updatedAt: subscription.updatedAt,
+    };
+
+    res.json(response);
+  } catch (e) {
+    console.error("[subscription] Error getting subscription:", e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /subscription/purchase - Valider un achat et créer/mettre à jour l'abonnement
+app.post("/subscription/purchase", requireAuth, async (req, res) => {
+  try {
+    const userId = String(req.user._id);
+    const { receiptData, platform, productId, transactionId } = req.body;
+
+    if (!receiptData || !platform || !productId) {
+      return res.status(400).json({
+        success: false,
+        error: "Missing required fields: receiptData, platform, productId"
+      });
+    }
+
+    if (!["ios", "android"].includes(platform)) {
+      return res.status(400).json({
+        success: false,
+        error: "Invalid platform. Must be 'ios' or 'android'"
+      });
+    }
+
+    // Determine billing cycle from productId
+    const billingCycle = productId.includes("monthly") ? "monthly" : "yearly";
+
+    // Calculate next billing date
+    const now = new Date();
+    const startDate = now;
+    let nextBillingDate;
+
+    if (billingCycle === "monthly") {
+      nextBillingDate = new Date(now.setMonth(now.getMonth() + 1));
+    } else {
+      nextBillingDate = new Date(now.setFullYear(now.getFullYear() + 1));
+    }
+
+    // Check if user already has a subscription
+    const existingSubscription = await db.collection("subscriptions").findOne({ userId });
+
+    if (existingSubscription) {
+      // Update existing subscription to premium
+      const updateData = {
+        plan: "premium",
+        status: "active",
+        productId,
+        billingCycle,
+        startDate: existingSubscription.plan === "free" ? startDate : existingSubscription.startDate,
+        endDate: nextBillingDate,
+        autoRenew: true,
+        nextBillingDate,
+        features: getDefaultFeatures("premium"),
+        purchaseReceipt: {
+          receiptData,
+          platform,
+          transactionId,
+          validatedAt: new Date(),
+        },
+        cancelledAt: null,
+        updatedAt: new Date(),
+      };
+
+      await db.collection("subscriptions").updateOne(
+        { _id: existingSubscription._id },
+        { $set: updateData }
+      );
+
+      const updated = await db.collection("subscriptions").findOne({ _id: existingSubscription._id });
+
+      return res.json({
+        success: true,
+        subscription: {
+          id: String(updated._id),
+          userId: updated.userId,
+          plan: updated.plan,
+          status: updated.status,
+          productId: updated.productId,
+          billingCycle: updated.billingCycle,
+          startDate: updated.startDate,
+          endDate: updated.endDate,
+          autoRenew: updated.autoRenew,
+          cancelledAt: updated.cancelledAt,
+          nextBillingDate: updated.nextBillingDate,
+          features: updated.features,
+          createdAt: updated.createdAt,
+          updatedAt: updated.updatedAt,
+        },
+      });
+    } else {
+      // Create new premium subscription
+      const subscription = {
+        userId,
+        plan: "premium",
+        status: "active",
+        productId,
+        billingCycle,
+        startDate,
+        endDate: nextBillingDate,
+        autoRenew: true,
+        nextBillingDate,
+        features: getDefaultFeatures("premium"),
+        purchaseReceipt: {
+          receiptData,
+          platform,
+          transactionId,
+          validatedAt: new Date(),
+        },
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      const result = await db.collection("subscriptions").insertOne(subscription);
+      subscription._id = result.insertedId;
+
+      return res.status(201).json({
+        success: true,
+        subscription: {
+          id: String(subscription._id),
+          userId: subscription.userId,
+          plan: subscription.plan,
+          status: subscription.status,
+          productId: subscription.productId,
+          billingCycle: subscription.billingCycle,
+          startDate: subscription.startDate,
+          endDate: subscription.endDate,
+          autoRenew: subscription.autoRenew,
+          cancelledAt: subscription.cancelledAt,
+          nextBillingDate: subscription.nextBillingDate,
+          features: subscription.features,
+          createdAt: subscription.createdAt,
+          updatedAt: subscription.updatedAt,
+        },
+      });
+    }
+  } catch (e) {
+    console.error("[subscription] Error processing purchase:", e);
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// POST /subscription/cancel - Annuler l'abonnement
+app.post("/subscription/cancel", requireAuth, async (req, res) => {
+  try {
+    const userId = String(req.user._id);
+
+    const subscription = await db.collection("subscriptions").findOne({ userId });
+
+    if (!subscription) {
+      return res.status(404).json({ success: false, error: "No subscription found" });
+    }
+
+    if (subscription.plan === "free") {
+      return res.status(400).json({ success: false, error: "Free plan cannot be cancelled" });
+    }
+
+    if (subscription.status === "cancelled") {
+      return res.status(400).json({ success: false, error: "Subscription already cancelled" });
+    }
+
+    // Update subscription to cancelled but keep it active until end date
+    await db.collection("subscriptions").updateOne(
+      { _id: subscription._id },
+      {
+        $set: {
+          status: "cancelled",
+          autoRenew: false,
+          cancelledAt: new Date(),
+          updatedAt: new Date(),
+        },
+      }
+    );
+
+    res.json({
+      success: true,
+      message: "Subscription cancelled. You will still have premium access until the end of your billing period.",
+    });
+  } catch (e) {
+    console.error("[subscription] Error cancelling subscription:", e);
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// GET /subscription/status - Vérifier si l'utilisateur peut utiliser une fonctionnalité
+app.get("/subscription/status", requireAuth, async (req, res) => {
+  try {
+    const userId = String(req.user._id);
+    const { feature } = req.query;
+
+    const subscription = await ensureUserSubscription(userId);
+
+    // Check if subscription is active (including cancelled but within period)
+    const isActive = subscription.status === "active" ||
+      (subscription.status === "cancelled" && subscription.endDate && new Date() < new Date(subscription.endDate));
+
+    // Check specific feature
+    if (feature && subscription.features) {
+      const featureAllowed = subscription.features[feature];
+      const featureLimit = typeof featureAllowed === "number" ? featureAllowed : undefined;
+
+      // For limits like maxTrips, count current usage
+      let currentUsage = 0;
+      if (feature === "maxTrips" && featureLimit > 0) {
+        currentUsage = await db.collection("trips").countDocuments({ ownerId: userId });
+      } else if (feature === "maxCollaborators" && featureLimit > 0) {
+        // Count all collaborators across all trips owned by user
+        const trips = await db.collection("trips").find({ ownerId: userId }).toArray();
+        const allCollaborators = new Set();
+        trips.forEach(trip => {
+          trip.collaborators?.forEach(collab => allCollaborators.add(collab.userId));
+        });
+        currentUsage = allCollaborators.size;
+      }
+
+      const allowed = isActive && (featureAllowed === true || featureAllowed === -1 || currentUsage < featureLimit);
+
+      return res.json({
+        allowed,
+        limit: featureLimit === -1 ? "unlimited" : featureLimit,
+        currentUsage: featureLimit > 0 ? currentUsage : undefined,
+        feature,
+        plan: subscription.plan,
+        status: subscription.status,
+        isActive,
+      });
+    }
+
+    // General status check
+    res.json({
+      plan: subscription.plan,
+      status: subscription.status,
+      isActive,
+      features: subscription.features,
+    });
+  } catch (e) {
+    console.error("[subscription] Error checking status:", e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /subscription/simulate-purchase - Endpoint de TEST pour simuler un achat sans IAP
+// ⚠️ À supprimer en production !
+app.post("/subscription/simulate-purchase", requireAuth, async (req, res) => {
+  try {
+    const userId = String(req.user._id);
+    const { productId } = req.body; // "com.myapp.monthly" ou "com.myapp.yearly"
+
+    // Validation des données d'entrée
+    if (!productId) {
+      return res.status(400).json({
+        success: false,
+        error: "productId est requis (ex: com.myapp.monthly)"
+      });
+    }
+
+    if (!["com.myapp.monthly", "com.myapp.yearly"].includes(productId)) {
+      return res.status(400).json({
+        success: false,
+        error: "productId invalide. Utilisez 'com.myapp.monthly' ou 'com.myapp.yearly'"
+      });
+    }
+
+    // Déterminer le cycle de facturation
+    const billingCycle = productId.includes("monthly") ? "monthly" : "yearly";
+
+    // Calculer la date de fin et de renouvellement
+    const now = new Date();
+    const startDate = now;
+    let nextBillingDate;
+
+    if (billingCycle === "monthly") {
+      // Ajouter 1 mois
+      nextBillingDate = new Date(now.setMonth(now.getMonth() + 1));
+    } else {
+      // Ajouter 1 an
+      nextBillingDate = new Date(now.setFullYear(now.getFullYear() + 1));
+    }
+
+    // Récupérer ou créer l'abonnement de l'utilisateur
+    const existingSubscription = await db.collection("subscriptions").findOne({ userId });
+
+    if (existingSubscription) {
+      // Mettre à jour l'abonnement existant vers Premium
+      const updateData = {
+        plan: "premium",
+        status: "active",
+        productId,
+        billingCycle,
+        startDate: existingSubscription.plan === "free" ? startDate : existingSubscription.startDate,
+        endDate: nextBillingDate,
+        autoRenew: true,
+        nextBillingDate,
+        features: getDefaultFeatures("premium"),
+        // Marquer comme achat simulé pour tests
+        purchaseReceipt: {
+          receiptData: "SIMULATED_PURCHASE",
+          platform: "simulation",
+          transactionId: "sim_" + Date.now(),
+          validatedAt: new Date(),
+        },
+        cancelledAt: null,
+        updatedAt: new Date(),
+      };
+
+      await db.collection("subscriptions").updateOne(
+        { _id: existingSubscription._id },
+        { $set: updateData }
+      );
+
+      const updated = await db.collection("subscriptions").findOne({ _id: existingSubscription._id });
+
+      return res.json({
+        success: true,
+        message: "Achat simulé avec succès ! ⚠️ N'oubliez pas de supprimer cet endpoint en production",
+        subscription: {
+          id: String(updated._id),
+          userId: updated.userId,
+          plan: updated.plan,
+          status: updated.status,
+          productId: updated.productId,
+          billingCycle: updated.billingCycle,
+          startDate: updated.startDate,
+          endDate: updated.endDate,
+          autoRenew: updated.autoRenew,
+          cancelledAt: updated.cancelledAt,
+          nextBillingDate: updated.nextBillingDate,
+          features: updated.features,
+          createdAt: updated.createdAt,
+          updatedAt: updated.updatedAt,
+        },
+      });
+    } else {
+      // Créer un nouvel abonnement Premium
+      const subscription = {
+        userId,
+        plan: "premium",
+        status: "active",
+        productId,
+        billingCycle,
+        startDate,
+        endDate: nextBillingDate,
+        autoRenew: true,
+        nextBillingDate,
+        features: getDefaultFeatures("premium"),
+        purchaseReceipt: {
+          receiptData: "SIMULATED_PURCHASE",
+          platform: "simulation",
+          transactionId: "sim_" + Date.now(),
+          validatedAt: new Date(),
+        },
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      const result = await db.collection("subscriptions").insertOne(subscription);
+      subscription._id = result.insertedId;
+
+      return res.status(201).json({
+        success: true,
+        message: "Achat simulé avec succès ! ⚠️ N'oubliez pas de supprimer cet endpoint en production",
+        subscription: {
+          id: String(subscription._id),
+          userId: subscription.userId,
+          plan: subscription.plan,
+          status: subscription.status,
+          productId: subscription.productId,
+          billingCycle: subscription.billingCycle,
+          startDate: subscription.startDate,
+          endDate: subscription.endDate,
+          autoRenew: subscription.autoRenew,
+          cancelledAt: subscription.cancelledAt,
+          nextBillingDate: subscription.nextBillingDate,
+          features: subscription.features,
+          createdAt: subscription.createdAt,
+          updatedAt: subscription.updatedAt,
+        },
+      });
+    }
+  } catch (e) {
+    console.error("[subscription] Error simulating purchase:", e);
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// POST /subscription/simulate-cancel - Endpoint de TEST pour annuler un abonnement
+// ⚠️ À supprimer en production !
+app.post("/subscription/simulate-cancel", requireAuth, async (req, res) => {
+  try {
+    const userId = String(req.user._id);
+
+    // Récupérer l'abonnement de l'utilisateur
+    const subscription = await db.collection("subscriptions").findOne({ userId });
+
+    if (!subscription) {
+      return res.status(404).json({ success: false, error: "Aucun abonnement trouvé" });
+    }
+
+    if (subscription.plan === "free") {
+      return res.status(400).json({ success: false, error: "Le plan Free ne peut pas être annulé" });
+    }
+
+    if (subscription.status === "cancelled") {
+      return res.status(400).json({ success: false, error: "Abonnement déjà annulé" });
+    }
+
+    // Simuler l'annulation (revenir au plan Free)
+    await db.collection("subscriptions").updateOne(
+      { _id: subscription._id },
+      {
+        $set: {
+          plan: "free",
+          status: "active",
+          productId: "",
+          billingCycle: null,
+          autoRenew: false,
+          features: getDefaultFeatures("free"),
+          endDate: null,
+          nextBillingDate: null,
+          cancelledAt: new Date(),
+          updatedAt: new Date(),
+        },
+        $unset: {
+          purchaseReceipt: "",
+        },
+      }
+    );
+
+    res.json({
+      success: true,
+      message: "Abonnement annulé (retour au plan Free) - Simulation ⚠️ À supprimer en production",
+    });
+  } catch (e) {
+    console.error("[subscription] Error simulating cancellation:", e);
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+    // Check if subscription is active (including cancelled but within period)
+    const isActive = subscription.status === "active" ||
+      (subscription.status === "cancelled" && subscription.endDate && new Date() < new Date(subscription.endDate));
+
+    // Check specific feature
+    if (feature && subscription.features) {
+      const featureAllowed = subscription.features[feature];
+      const featureLimit = typeof featureAllowed === "number" ? featureAllowed : undefined;
+
+      // For limits like maxTrips, count current usage
+      let currentUsage = 0;
+      if (feature === "maxTrips" && featureLimit > 0) {
+        currentUsage = await db.collection("trips").countDocuments({ ownerId: userId });
+      } else if (feature === "maxCollaborators" && featureLimit > 0) {
+        // Count all collaborators across all trips owned by user
+        const trips = await db.collection("trips").find({ ownerId: userId }).toArray();
+        const allCollaborators = new Set();
+        trips.forEach(trip => {
+          trip.collaborators?.forEach(collab => allCollaborators.add(collab.userId));
+        });
+        currentUsage = allCollaborators.size;
+      }
+
+      const allowed = isActive && (featureAllowed === true || featureAllowed === -1 || currentUsage < featureLimit);
+
+      return res.json({
+        allowed,
+        limit: featureLimit === -1 ? "unlimited" : featureLimit,
+        currentUsage: featureLimit > 0 ? currentUsage : undefined,
+        feature,
+        plan: subscription.plan,
+        status: subscription.status,
+        isActive,
+      });
+    }
+
+    // General status check
+    res.json({
+      plan: subscription.plan,
+      status: subscription.status,
+      isActive,
+      features: subscription.features,
+    });
+  } catch (e) {
+    console.error("[subscription] Error checking status:", e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 connectMongo()
   .then(() => {
     // Log toutes les routes enregistrées pour debug
