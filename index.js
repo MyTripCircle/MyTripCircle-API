@@ -28,10 +28,11 @@ app.set("trust proxy", 1);
 
 // ─── Sécurité ─────────────────────────────────────────────────────────────────
 app.use(helmet());
+app.use(helmet.hsts({ maxAge: 31536000, includeSubDomains: true, preload: true }));
 
 const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(",").map((o) => o.trim())
-  : ["https://mytripcircle-api.enzo-turpin.fr"];
+  : [];
 
 app.use(cors({
   origin: ALLOWED_ORIGINS,
@@ -94,7 +95,7 @@ const ACTIVE_IP =
 
 connectMongo()
   .then(() => {
-    app.listen(PORT, ACTIVE_IP, () => {
+    app.listen(PORT, () => {
       console.log(`[server] API démarrée sur http://${ACTIVE_IP}:${PORT}`);
       console.log(`[server] Également accessible via http://localhost:${PORT}`);
     });

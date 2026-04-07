@@ -52,8 +52,25 @@ router.put("/avatar", requireAuth, async (req, res) => {
     if (!avatar || typeof avatar !== "string") {
       return res.status(400).json({ success: false, error: "Avatar requis" });
     }
-    if (!avatar.startsWith("data:image/") && !avatar.startsWith("http")) {
-      return res.status(400).json({ success: false, error: "Format d'avatar invalide" });
+
+    const ALLOWED_IMAGE_MIMES = ["data:image/jpeg;", "data:image/png;", "data:image/webp;", "data:image/gif;"];
+    if (avatar.startsWith("data:")) {
+      const isSafeDataUrl = ALLOWED_IMAGE_MIMES.some((prefix) => avatar.startsWith(prefix));
+      if (!isSafeDataUrl) {
+        return res.status(400).json({ success: false, error: "Format d'avatar invalide (JPEG, PNG, WEBP ou GIF uniquement)" });
+      }
+      if (Buffer.byteLength(avatar) > 5 * 1024 * 1024) {
+        return res.status(400).json({ success: false, error: "Avatar trop volumineux (5 Mo max)" });
+      }
+    } else {
+      try {
+        const url = new URL(avatar);
+        if (url.protocol !== "https:") {
+          return res.status(400).json({ success: false, error: "URL d'avatar invalide (HTTPS requis)" });
+        }
+      } catch {
+        return res.status(400).json({ success: false, error: "Format d'avatar invalide" });
+      }
     }
 
     await db.collection("users").updateOne({ _id: userId }, { $set: { avatar, updatedAt: new Date() } });
@@ -199,6 +216,13 @@ router.get("/lookup", requireAuth, async (req, res) => {
     const { email, phone } = req.query;
 
     if (!email && !phone) return res.status(400).json({ error: "email ou phone requis" });
+
+    if (email && (typeof email !== "string" || !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email.trim()))) {
+      return res.status(400).json({ error: "Format d'email invalide" });
+    }
+    if (phone && (typeof phone !== "string" || !/^\+?[\d\s\-().]{6,20}$/.test(phone.trim()))) {
+      return res.status(400).json({ error: "Format de téléphone invalide" });
+    }
 
     const query = email
       ? { email: email.toLowerCase().trim() }

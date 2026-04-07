@@ -4,7 +4,7 @@ const jwt = require("jsonwebtoken");
 const crypto = require("crypto");
 const { ObjectId } = require("mongodb");
 const { getDb } = require("../db");
-const { JWT_SECRET, API_BASE_URL, APPLE_APP_ID } = require("../config");
+const { JWT_SECRET, REFRESH_SECRET, API_BASE_URL, APPLE_APP_ID } = require("../config");
 const {
   sendOtpEmail,
   sendPasswordResetEmail,
@@ -77,8 +77,19 @@ function sanitizeUser(doc) {
   };
 }
 
-function signToken(userId, expiresIn = "7d") {
-  return jwt.sign({ id: String(userId) }, JWT_SECRET, { expiresIn });
+function signAccessToken(userId) {
+  return jwt.sign({ id: String(userId) }, JWT_SECRET, { expiresIn: "15m" });
+}
+
+async function createRefreshToken(db, userId) {
+  const token = jwt.sign({ id: String(userId) }, REFRESH_SECRET, { expiresIn: "7d" });
+  await db.collection("refreshTokens").insertOne({
+    token,
+    userId: String(userId),
+    createdAt: new Date(),
+    expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+  });
+  return token;
 }
 
 function generateOtp() {
@@ -206,7 +217,9 @@ router.post("/login", authLimiter, async (req, res) => {
       });
     }
 
-    return res.json({ success: true, token: signToken(user._id), user: sanitizeUser(user) });
+    const accessToken = signAccessToken(user._id);
+    const refreshToken = await createRefreshToken(db, user._id);
+    return res.json({ success: true, token: accessToken, refreshToken, user: sanitizeUser(user) });
   } catch (e) {
     return res.status(500).json({ success: false, error: "Erreur interne du serveur" });
   }
@@ -241,7 +254,9 @@ router.post("/verify-otp", authLimiter, async (req, res) => {
     await linkPendingFriendRequests(userId, user.email, user.phone);
 
     const updatedUser = await db.collection("users").findOne({ _id: new ObjectId(userId) });
-    return res.json({ success: true, token: signToken(userId), user: sanitizeUser(updatedUser) });
+    const accessToken = signAccessToken(userId);
+    const refreshToken = await createRefreshToken(db, userId);
+    return res.json({ success: true, token: accessToken, refreshToken, user: sanitizeUser(updatedUser) });
   } catch (e) {
     return res.status(500).json({ success: false, error: "Erreur interne du serveur" });
   }
@@ -349,7 +364,9 @@ router.post("/reset-password", authLimiter, async (req, res) => {
       }
     );
 
-    return res.json({ success: true, token: signToken(user._id, "30d"), user: sanitizeUser(user) });
+    const accessToken = signAccessToken(user._id);
+    const refreshToken = await createRefreshToken(db, user._id);
+    return res.json({ success: true, token: accessToken, refreshToken, user: sanitizeUser(user) });
   } catch (e) {
     return res.status(500).json({ success: false, error: "Erreur interne du serveur" });
   }
@@ -385,7 +402,9 @@ router.post("/google", authLimiter, async (req, res) => {
       await db.collection("users").updateOne({ _id: user._id }, { $set: { googleId } });
     }
 
-    return res.json({ success: true, token: signToken(user._id, "30d"), user: sanitizeUser(user) });
+    const accessToken = signAccessToken(user._id);
+    const refreshToken = await createRefreshToken(db, user._id);
+    return res.json({ success: true, token: accessToken, refreshToken, user: sanitizeUser(user) });
   } catch (e) {
     console.error("[auth/google]", e.message);
     return res.status(500).json({ success: false, error: "Authentification Google échouée" });
@@ -433,7 +452,9 @@ router.post("/apple", authLimiter, async (req, res) => {
       await db.collection("users").updateOne({ _id: user._id }, { $set: { appleId } });
     }
 
-    return res.json({ success: true, token: signToken(user._id, "30d"), user: sanitizeUser(user) });
+    const accessToken = signAccessToken(user._id);
+    const refreshToken = await createRefreshToken(db, user._id);
+    return res.json({ success: true, token: accessToken, refreshToken, user: sanitizeUser(user) });
   } catch (e) {
     console.error("[auth/apple]", e.message);
     return res.status(500).json({ success: false, error: "Authentification Apple échouée" });
@@ -502,4 +523,37 @@ router.get("/reset-password-page", async (req, res) => {
   }
 });
 
-module.exports = { router, sanitizeUser, isStrongPassword, trimIfString, signToken };
+// POST /users/refresh
+router.post("/refresh", async (req, res) => {
+  const { refreshToken } = req.body;
+  if (!refreshToken) return res.status(400).json({ success: false, error: "refreshToken requis" });
+
+  try {
+    const payload = jwt.verify(refreshToken, REFRESH_SECRET);
+    const db = getDb();
+
+    const stored = await db.collection("refreshTokens").findOne({ token: refreshToken });
+    if (!stored) return res.status(401).json({ success: false, error: "Token invalide ou révoqué" });
+
+    const token = signAccessToken(payload.id);
+    return res.json({ success: true, token });
+  } catch {
+    return res.status(401).json({ success: false, error: "Token invalide ou expiré" });
+  }
+});
+
+// POST /users/logout
+router.post("/logout", async (req, res) => {
+  const { refreshToken } = req.body;
+  if (refreshToken) {
+    try {
+      const db = getDb();
+      await db.collection("refreshTokens").deleteOne({ token: refreshToken });
+    } catch {
+      // Silencieux : on déconnecte quoi qu'il arrive
+    }
+  }
+  return res.json({ success: true });
+});
+
+module.exports = { router, sanitizeUser, isStrongPassword, trimIfString, signAccessToken };

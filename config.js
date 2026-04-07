@@ -1,5 +1,5 @@
 // Validation des variables d'environnement au démarrage
-const REQUIRED_VARS = ["MONGODB_URI", "JWT_SECRET"];
+const REQUIRED_VARS = ["MONGODB_URI", "JWT_SECRET", "REFRESH_SECRET"];
 
 function validateEnv() {
   const missing = REQUIRED_VARS.filter((key) => !process.env[key]);
@@ -23,6 +23,7 @@ module.exports = {
   MONGODB_URI: process.env.MONGODB_URI,
   DB_NAME: process.env.DB_NAME || "mytripcircle",
   JWT_SECRET: process.env.JWT_SECRET,
+  REFRESH_SECRET: process.env.REFRESH_SECRET,
   MAIL_USER: process.env.MAIL_USER,
   MAIL_PASS: process.env.MAIL_PASS,
   API_BASE_URL:
