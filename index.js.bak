@@ -1,0 +1,3458 @@
+// Simple Express API (JS) for Expo dev
+const express = require("express");
+const cors = require("cors");
+const { MongoClient, ObjectId } = require("mongodb");
+const bcrypt = require("bcrypt");
+const jwt = require("jsonwebtoken");
+const os = require("os");
+const nodemailer = require("nodemailer");
+require("dotenv").config();
+
+const app = express();
+app.use(cors());
+app.use(express.json({ limit: "5mb" }));
+
+// Auth + user routes backed by MongoDB (users collection)
+const authRoutes = express.Router();
+
+const userRoutes = express.Router();
+
+function getJwtSecret() {
+  return process.env.JWT_SECRET || "dev-secret-change-me";
+}
+
+console.log("ENV CHECK:", {
+  MAIL_USER: process.env.MAIL_USER,
+  MAIL_PASS: process.env.MAIL_PASS ? "OK" : "MISSING",
+});
+
+// Email transporter configuration
+let transporter = null;
+if (process.env.MAIL_USER && process.env.MAIL_PASS) {
+  transporter = nodemailer.createTransport({
+    service: "gmail",
+    auth: {
+      user: process.env.MAIL_USER,
+      pass: process.env.MAIL_PASS,
+    },
+  });
+  console.log("[server] Email transporter configured");
+} else {
+  console.log("[server] Email transporter NOT configured - emails will be logged only");
+}
+
+// Send OTP email
+async function sendOtpEmail(to, otp) {
+  if (!transporter) {
+    console.log(`[EMAIL] Would send OTP ${otp} to ${to} (transporter not configured)`);
+    return { success: true, logged: true };
+  }
+
+  try {
+    await transporter.sendMail({
+      from: `"MyTripCircle" <${process.env.MAIL_USER}>`,
+      to,
+      subject: "Your verification code",
+      text: `Your verification code is: ${otp}\n\nThis code will expire in 10 minutes.\n\nIf you didn't request this code, please ignore this email.`,
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h2 style="color: #2891FF;">Your verification code</h2>
+          <p>Use the following code to verify your account:</p>
+          <div style="background: #f5f5f5; padding: 20px; text-align: center; border-radius: 8px; margin: 20px 0;">
+            <span style="font-size: 32px; font-weight: bold; letter-spacing: 4px; color: #2891FF;">${otp}</span>
+          </div>
+          <p>This code will expire in 10 minutes.</p>
+          <p style="color: #666; font-size: 14px;">If you didn't request this code, please ignore this email.</p>
+        </div>
+      `,
+    });
+    console.log(`[EMAIL] OTP sent to ${to}`);
+    return { success: true };
+  } catch (error) {
+    console.error("[EMAIL] Error sending OTP:", error.message);
+    // Fallback: log OTP instead of throwing
+    console.log(`[EMAIL] Fallback - OTP ${otp} for ${to}`);
+    return { success: true, logged: true, error: error.message };
+  }
+}
+
+// Send password reset email
+async function sendPasswordResetEmail(to, resetToken) {
+  if (!transporter) {
+    console.log(`[EMAIL] Would send reset link to ${to} (transporter not configured)`);
+    return { success: true, logged: true };
+  }
+
+  try {
+    const resetLink = `${process.env.API_BASE_URL || 'http://localhost:19006'}/reset-password?token=${resetToken}`;
+
+    await transporter.sendMail({
+      from: `"MyTripCircle" <${process.env.MAIL_USER}>`,
+      to,
+      subject: "Reset your password",
+      text: `You requested a password reset. Click the link below to reset your password:\n\n${resetLink}\n\nThis link will expire in 1 hour.\n\nIf you didn't request this, please ignore this email.`,
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h2 style="color: #2891FF;">Reset your password</h2>
+          <p>You requested a password reset. Click the button below to reset your password:</p>
+          <div style="margin: 30px 0;">
+            <a href="${resetLink}" style="background: #2891FF; color: white; padding: 15px 30px; text-decoration: none; border-radius: 8px; display: inline-block; font-weight: bold;">Reset Password</a>
+          </div>
+          <p>Or copy this link:</p>
+          <p style="background: #f5f5f5; padding: 10px; border-radius: 4px; word-break: break-all; font-size: 12px;">${resetLink}</p>
+          <p style="color: #666; font-size: 14px;">This link will expire in 1 hour.</p>
+          <p style="color: #666; font-size: 14px;">If you didn't request this, please ignore this email.</p>
+        </div>
+      `,
+    });
+    console.log(`[EMAIL] Password reset link sent to ${to}`);
+    return { success: true };
+  } catch (error) {
+    console.error("[EMAIL] Error sending password reset:", error.message);
+    // Fallback: log token instead of throwing
+    console.log(`[EMAIL] Fallback - Reset token for ${to}: ${resetToken}`);
+    return { success: true, logged: true, error: error.message };
+  }
+}
+
+function sanitizeUser(userDoc) {
+  if (!userDoc) return null;
+  return {
+    id: String(userDoc._id),
+    name: userDoc.name,
+    email: userDoc.email,
+    phone: userDoc.phone,
+    avatar: userDoc.avatar,
+    verified: userDoc.verified || false,
+    createdAt: userDoc.createdAt,
+    language: userDoc.language || "fr",
+    isPublicProfile: userDoc.isPublicProfile === true,
+  };
+}
+
+// ─── Templates d'emails bilingues ────────────────────────────────────────────
+
+const EMAIL_HEADER = `
+  <div style="background: linear-gradient(135deg, #2891FF 0%, #8869FF 100%); padding: 30px; text-align: center; border-radius: 10px 10px 0 0;">
+    <h1 style="color: white; margin: 0;">🌍 MyTripCircle</h1>
+  </div>
+`;
+
+function emailWrap(content) {
+  return `<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">${EMAIL_HEADER}<div style="background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px;">${content}</div></div>`;
+}
+
+function buildFriendRequestEmail(lang, senderName) {
+  const locale = lang === "en" ? "en-US" : "fr-FR";
+  void locale;
+  if (lang === "en") {
+    return {
+      subject: "New friend request on MyTripCircle",
+      html: emailWrap(`
+        <h2 style="color: #333;">New friend request!</h2>
+        <p style="color: #666; font-size: 16px;">
+          <strong>${senderName}</strong> wants to add you as a friend on MyTripCircle.
+        </p>
+        <div style="background: white; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #2891FF;">
+          <p style="color: #666; margin: 0;">
+            Accept this request to start sharing your trips together!
+          </p>
+        </div>
+        <p style="color: #9E9E9E; font-size: 14px; text-align: center; margin-top: 30px;">
+          Open the MyTripCircle app to respond to this request.
+        </p>
+      `),
+    };
+  }
+  return {
+    subject: "Nouvelle demande d'ami sur MyTripCircle",
+    html: emailWrap(`
+      <h2 style="color: #333;">Nouvelle demande d'ami !</h2>
+      <p style="color: #666; font-size: 16px;">
+        <strong>${senderName}</strong> souhaite vous ajouter en ami sur MyTripCircle.
+      </p>
+      <div style="background: white; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #2891FF;">
+        <p style="color: #666; margin: 0;">
+          Acceptez cette demande pour commencer à partager vos voyages ensemble !
+        </p>
+      </div>
+      <p style="color: #9E9E9E; font-size: 14px; text-align: center; margin-top: 30px;">
+        Ouvrez l'application MyTripCircle pour répondre à cette demande.
+      </p>
+    `),
+  };
+}
+
+function buildFriendRequestFoundEmail(lang, newUserName) {
+  if (lang === "en") {
+    return {
+      subject: "Your friend request has been found!",
+      html: emailWrap(`
+        <h2 style="color: #333;">Great news!</h2>
+        <p style="color: #666; font-size: 16px;">
+          <strong>${newUserName}</strong> just signed up on MyTripCircle.
+        </p>
+        <p style="color: #666;">
+          The friend request you sent is now visible in their app!
+        </p>
+      `),
+    };
+  }
+  return {
+    subject: "Votre demande d'ami a été trouvée !",
+    html: emailWrap(`
+      <h2 style="color: #333;">Bonne nouvelle !</h2>
+      <p style="color: #666; font-size: 16px;">
+        <strong>${newUserName}</strong> vient de s'inscrire sur MyTripCircle.
+      </p>
+      <p style="color: #666;">
+        La demande d'ami que vous avez envoyée est maintenant visible dans leur application !
+      </p>
+    `),
+  };
+}
+
+function buildTripInvitationEmail(lang, { inviterName, tripTitle, tripDestination, tripStartDate, tripEndDate, message, invitationLink }) {
+  const locale = lang === "en" ? "en-US" : "fr-FR";
+  const startFmt = new Date(tripStartDate).toLocaleDateString(locale);
+  const endFmt = new Date(tripEndDate).toLocaleDateString(locale);
+  const msgBlock = message ? `<p style="color: #666; font-style: italic;">"${message}"</p>` : "";
+  const tripCard = `
+    <div style="background: white; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #2891FF;">
+      <h3 style="color: #2891FF; margin: 0 0 10px 0;">${tripTitle}</h3>
+      <p style="color: #666; margin: 5px 0;">📍 ${tripDestination}</p>
+      <p style="color: #666; margin: 5px 0;">📅 ${startFmt} → ${endFmt}</p>
+    </div>
+  `;
+
+  if (lang === "en") {
+    return {
+      subject: `You've been invited to join a trip on MyTripCircle`,
+      html: emailWrap(`
+        <h2 style="color: #333;">You've been invited to a trip!</h2>
+        <p style="color: #666; font-size: 16px;">
+          <strong>${inviterName}</strong> has invited you to join the trip:
+        </p>
+        ${tripCard}
+        ${msgBlock}
+        <div style="text-align: center; margin: 30px 0;">
+          <a href="${invitationLink}" style="background: linear-gradient(135deg, #2891FF 0%, #8869FF 100%); color: white; padding: 15px 30px; text-decoration: none; border-radius: 8px; font-weight: bold; display: inline-block;">
+            Accept the invitation
+          </a>
+        </div>
+        <p style="color: #999; font-size: 12px; text-align: center;">
+          This invitation expires in 7 days.<br>
+          If you don't have the MyTripCircle app yet, install it first.
+        </p>
+      `),
+      text: `You've been invited to join a trip on MyTripCircle!\n\n${inviterName} invited you to: ${tripTitle}\nDestination: ${tripDestination}\nDates: ${startFmt} → ${endFmt}\n\nOpen this link in the MyTripCircle app:\n${invitationLink}\n\nThis invitation expires in 7 days.`,
+    };
+  }
+  return {
+    subject: `Invitation à rejoindre un voyage sur MyTripCircle`,
+    html: emailWrap(`
+      <h2 style="color: #333;">Vous avez été invité à un voyage !</h2>
+      <p style="color: #666; font-size: 16px;">
+        <strong>${inviterName}</strong> vous a invité à rejoindre le voyage :
+      </p>
+      ${tripCard}
+      ${msgBlock}
+      <div style="text-align: center; margin: 30px 0;">
+        <a href="${invitationLink}" style="background: linear-gradient(135deg, #2891FF 0%, #8869FF 100%); color: white; padding: 15px 30px; text-decoration: none; border-radius: 8px; font-weight: bold; display: inline-block;">
+          Accepter l'invitation
+        </a>
+      </div>
+      <p style="color: #999; font-size: 12px; text-align: center;">
+        Cette invitation expire dans 7 jours.<br>
+        Si vous n'avez pas l'application MyTripCircle, installez-la d'abord.
+      </p>
+    `),
+    text: `Vous avez été invité à rejoindre un voyage sur MyTripCircle !\n\n${inviterName} vous a invité à rejoindre : ${tripTitle}\nDestination : ${tripDestination}\nDates : ${startFmt} → ${endFmt}\n\nPour accepter, ouvrez le lien suivant dans l'application MyTripCircle :\n${invitationLink}\n\nCette invitation expire dans 7 jours.`,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+function isStrongPassword(password) {
+  if (typeof password !== "string") return false;
+  // min 8 chars, 1 uppercase, 1 lowercase, 1 digit, 1 special character
+  return /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{8,}$/.test(
+    password,
+  );
+}
+
+async function requireAuth(req, res, next) {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({ success: false, error: "Unauthorized" });
+    }
+
+    const token = authHeader.split(" ")[1];
+    const decoded = jwt.verify(token, getJwtSecret());
+    const userId = typeof decoded === "string" ? decoded : decoded.id;
+
+    const user = await db
+      .collection("users")
+      .findOne({ _id: new ObjectId(userId) });
+
+    if (!user) {
+      return res.status(401).json({ success: false, error: "Unauthorized" });
+    }
+
+    req.user = user;
+    next();
+  } catch (e) {
+    return res.status(401).json({ success: false, error: "Unauthorized" });
+  }
+}
+
+// Fonction pour lier les demandes d'amis en attente à un utilisateur nouvellement inscrit/mis à jour
+async function linkPendingFriendRequests(userId, userEmail, userPhone) {
+  try {
+    // Trouver les demandes d'amis en attente pour cet email ou téléphone
+    const pendingRequests = await db.collection("friendRequests").find({
+      recipientId: null,
+      status: "pending",
+      $or: [
+        userEmail ? { recipientEmail: userEmail } : {},
+        userPhone ? { recipientPhone: userPhone } : {},
+      ].filter(Boolean),
+    }).toArray();
+
+    if (pendingRequests.length > 0) {
+      // Mettre à jour ces demandes avec l'ID du destinataire
+      const requestIds = pendingRequests.map(r => r._id);
+      await db.collection("friendRequests").updateMany(
+        { _id: { $in: requestIds } },
+        { $set: { recipientId: userId } }
+      );
+
+      // Envoyer des notifications aux senders
+      const newUser = await db.collection("users").findOne({ _id: new ObjectId(userId) });
+      for (const request of pendingRequests) {
+        if (transporter) {
+          try {
+            const sender = await db.collection("users").findOne({ _id: new ObjectId(request.senderId) });
+            if (sender) {
+              const senderLang = sender.language || "fr";
+              const displayName = newUser?.name || userEmail;
+              const tpl = buildFriendRequestFoundEmail(senderLang, displayName);
+              await transporter.sendMail({
+                from: process.env.MAIL_USER || "noreply@mytripcircle.com",
+                to: sender.email,
+                subject: tpl.subject,
+                html: tpl.html,
+              });
+            }
+          } catch (emailError) {
+            console.error("Error sending friend request notification:", emailError);
+          }
+        }
+      }
+
+      return pendingRequests.length;
+    }
+    return 0;
+  } catch (error) {
+    console.error("Error linking pending friend requests:", error);
+    return 0;
+  }
+}
+
+authRoutes.post("/register", async (req, res) => {
+  try {
+    const name = trimIfString(req.body?.name);
+    const email = trimIfString(req.body?.email)?.toLowerCase();
+    const password = req.body?.password;
+    const phone = trimIfString(req.body?.phone);
+
+    if (!name || !email || !password) {
+      return res.status(400).json({
+        success: false,
+        error: "Missing required fields",
+      });
+    }
+
+    if (!isStrongPassword(password)) {
+      return res.status(400).json({
+        success: false,
+        error: "Weak password",
+        field: "password",
+      });
+    }
+
+    if (phone) {
+      // Very permissive phone validation (E.164-ish)
+      const phoneOk = /^[+]?[\d\s().-]{7,20}$/.test(phone);
+      if (!phoneOk) {
+        return res.status(400).json({
+          success: false,
+          error: "Invalid phone number",
+          field: "phone",
+        });
+      }
+
+      const existingPhone = await db.collection("users").findOne({ phone, verified: true });
+      if (existingPhone) {
+        return res.status(409).json({
+          success: false,
+          error: "Phone number already in use",
+          field: "phone",
+        });
+      }
+    }
+
+    const existing = await db.collection("users").findOne({ email });
+    if (existing) {
+      // Compte existant mais non vérifié → renvoyer un OTP et rediriger vers la vérification
+      if (!existing.verified) {
+        const otp = Math.floor(100000 + Math.random() * 900000).toString();
+        const otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
+        await db.collection("users").updateOne(
+          { _id: existing._id },
+          { $set: { otp, otpExpiresAt, updatedAt: new Date() } },
+        );
+        await sendOtpEmail(email, otp);
+        return res.status(200).json({
+          success: false,
+          requiresOtp: true,
+          userId: String(existing._id),
+          error: "Account not verified. A new code has been sent to your email.",
+        });
+      }
+      return res.status(409).json({
+        success: false,
+        error: "Email already in use",
+        field: "email",
+      });
+    }
+
+    const passwordHash = await bcrypt.hash(password, 10);
+
+    // Generate 6-digit OTP
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+
+    const userDoc = {
+      name,
+      email,
+      // Store the hash under `password` to satisfy MongoDB validators/schemas.
+      password: passwordHash,
+      phone,
+      otp,
+      otpExpiresAt,
+      verified: false,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    const result = await db.collection("users").insertOne(userDoc);
+    const userId = String(result.insertedId);
+
+    // Send OTP email
+    await sendOtpEmail(email, otp);
+
+    return res.status(201).json({
+      success: true,
+      userId,
+      message: "OTP sent to your email",
+    });
+  } catch (e) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+authRoutes.post("/login", async (req, res) => {
+  try {
+    const email = trimIfString(req.body?.email)?.toLowerCase();
+    const password = req.body?.password;
+
+    if (!email || !password) {
+      return res
+        .status(400)
+        .json({ success: false, error: "Missing required fields" });
+    }
+
+    const user = await db.collection("users").findOne({ email });
+    if (!user) {
+      return res.status(401).json({
+        success: false,
+        error: "Invalid credentials",
+        field: "password",
+      });
+    }
+
+    const storedHash = user.passwordHash || user.password;
+    if (!storedHash) {
+      return res.status(401).json({
+        success: false,
+        error: "Invalid credentials",
+        field: "password",
+      });
+    }
+
+    const ok = await bcrypt.compare(password, storedHash);
+    if (!ok) {
+      return res.status(401).json({
+        success: false,
+        error: "Invalid credentials",
+        field: "password",
+      });
+    }
+
+    // Check if user is verified (OTP validated)
+    if (!user.verified) {
+      // Check if OTP is still valid
+      if (user.otp && user.otpExpiresAt && new Date() < new Date(user.otpExpiresAt)) {
+        return res.status(403).json({
+          success: false,
+          error: "Please verify your account with the OTP sent to your email",
+          requiresOtp: true,
+          userId: String(user._id),
+        });
+      }
+      // OTP expired, generate a new one
+      const newOtp = Math.floor(100000 + Math.random() * 900000).toString();
+      const otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+
+      await db.collection("users").updateOne(
+        { _id: user._id },
+        { $set: { otp: newOtp, otpExpiresAt } }
+      );
+
+      // Send new OTP email
+      await sendOtpEmail(user.email, newOtp);
+
+      return res.status(403).json({
+        success: false,
+        error: "Your verification code expired. A new code has been sent to your email",
+        requiresOtp: true,
+        userId: String(user._id),
+      });
+    }
+
+    const token = jwt.sign({ id: String(user._id) }, getJwtSecret(), {
+      expiresIn: "7d",
+    });
+
+    return res.json({
+      success: true,
+      token,
+      user: sanitizeUser(user),
+    });
+  } catch (e) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+userRoutes.put("/me", requireAuth, async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const name = trimIfString(req.body?.name);
+    const email = trimIfString(req.body?.email)?.toLowerCase();
+    const phone = trimIfString(req.body?.phone);
+
+    if (!name || !email) {
+      return res.status(400).json({
+        success: false,
+        error: "Name and email are required",
+      });
+    }
+
+    const existing = await db.collection("users").findOne({
+      email,
+      _id: { $ne: userId },
+    });
+    if (existing) {
+      return res
+        .status(409)
+        .json({ success: false, error: "Email already in use" });
+    }
+
+    const language = req.body?.language;
+    const updateData = { name, email, updatedAt: new Date() };
+    if (phone) {
+      updateData.phone = phone;
+    }
+    if (language === "en" || language === "fr") {
+      updateData.language = language;
+    }
+
+    await db
+      .collection("users")
+      .updateOne(
+        { _id: userId },
+        { $set: updateData },
+      );
+
+    // Lier les demandes d'amis en attente (si le téléphone a été ajouté/modifié)
+    const user = await db.collection("users").findOne({ _id: userId });
+    if (user) {
+      await linkPendingFriendRequests(String(userId), user.email, user.phone);
+    }
+
+    const updated = await db.collection("users").findOne({ _id: userId });
+    return res.json({ success: true, user: sanitizeUser(updated) });
+  } catch (e) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+userRoutes.put("/avatar", requireAuth, async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const { avatar } = req.body;
+    if (!avatar || typeof avatar !== "string") {
+      return res.status(400).json({ success: false, error: "Avatar is required" });
+    }
+    if (!avatar.startsWith("data:image/") && !avatar.startsWith("http")) {
+      return res.status(400).json({ success: false, error: "Invalid avatar format" });
+    }
+    await db.collection("users").updateOne({ _id: userId }, { $set: { avatar, updatedAt: new Date() } });
+    // Propager l'avatar dans tous les enregistrements d'amitié de cet utilisateur
+    await db.collection("friends").updateMany({ friendId: String(userId) }, { $set: { avatar } });
+    const updated = await db.collection("users").findOne({ _id: userId });
+    return res.json({ success: true, user: sanitizeUser(updated) });
+  } catch (e) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+userRoutes.put("/settings", requireAuth, async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const { isPublicProfile } = req.body;
+    if (typeof isPublicProfile !== "boolean") {
+      return res.status(400).json({ success: false, error: "isPublicProfile must be a boolean" });
+    }
+    await db.collection("users").updateOne(
+      { _id: userId },
+      { $set: { isPublicProfile, updatedAt: new Date() } },
+    );
+    const updated = await db.collection("users").findOne({ _id: userId });
+    return res.json({ success: true, user: sanitizeUser(updated) });
+  } catch (e) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+userRoutes.put("/language", requireAuth, async (req, res) => {
+  try {
+    const language = req.body?.language;
+    if (language !== "en" && language !== "fr") {
+      return res.status(400).json({ success: false, error: "Invalid language. Supported: en, fr" });
+    }
+    await db.collection("users").updateOne(
+      { _id: req.user._id },
+      { $set: { language, updatedAt: new Date() } },
+    );
+    return res.json({ success: true, language });
+  } catch (e) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+userRoutes.put("/change-password", requireAuth, async (req, res) => {
+  try {
+    const currentPassword = req.body?.currentPassword;
+    const newPassword = req.body?.newPassword;
+
+    if (!currentPassword || !newPassword) {
+      return res
+        .status(400)
+        .json({ success: false, error: "Missing required fields" });
+    }
+
+    const storedHash = req.user.passwordHash || req.user.password;
+    if (!storedHash) {
+      return res.status(400).json({
+        success: false,
+        error: "Current password is incorrect",
+      });
+    }
+
+    const ok = await bcrypt.compare(currentPassword, storedHash);
+    if (!ok) {
+      return res.status(400).json({
+        success: false,
+        error: "Current password is incorrect",
+      });
+    }
+
+    if (!isStrongPassword(newPassword)) {
+      return res.status(400).json({
+        success: false,
+        error: "Weak password",
+        field: "password",
+      });
+    }
+
+    const passwordHash = await bcrypt.hash(newPassword, 10);
+    await db.collection("users").updateOne(
+      { _id: req.user._id },
+      {
+        $set: { password: passwordHash, updatedAt: new Date() },
+        $unset: { passwordHash: "" },
+      },
+    );
+
+    return res.json({ success: true });
+  } catch (e) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// Delete account
+userRoutes.delete("/me", requireAuth, async (req, res) => {
+  try {
+    const userId = req.user._id;
+    await db.collection("trips").deleteMany({ ownerId: userId.toString() });
+    await db.collection("bookings").deleteMany({ userId: userId.toString() });
+    await db.collection("addresses").deleteMany({ userId: userId.toString() });
+    await db.collection("invitations").deleteMany({
+      $or: [{ inviterId: userId.toString() }, { inviteeId: userId.toString() }],
+    });
+    await db.collection("friends").deleteMany({
+      $or: [{ userId: userId.toString() }, { friendId: userId.toString() }],
+    });
+    await db.collection("users").deleteOne({ _id: userId });
+    return res.json({ success: true });
+  } catch (e) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// Forgot password - request reset link
+authRoutes.post("/forgot-password", async (req, res) => {
+  try {
+    const email = trimIfString(req.body?.email)?.toLowerCase();
+
+    if (!email) {
+      return res
+        .status(400)
+        .json({ success: false, error: "Email is required" });
+    }
+
+    const user = await db.collection("users").findOne({ email });
+    if (!user) {
+      // Don't reveal if email exists for security
+      return res.json({
+        success: true,
+        message: "If an account exists, a reset link has been sent",
+      });
+    }
+
+    // Generate reset token (simple implementation - in production use crypto.randomBytes)
+    const resetToken = require("crypto").randomBytes(32).toString("hex");
+    const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+
+    // Store reset token (in production, use a separate collection)
+    await db.collection("users").updateOne(
+      { _id: user._id },
+      {
+        $set: {
+          resetToken,
+          resetTokenExpiresAt: expiresAt,
+          updatedAt: new Date(),
+        },
+      },
+    );
+
+    // Send password reset email
+    await sendPasswordResetEmail(email, resetToken);
+
+    return res.json({
+      success: true,
+      message: "If an account exists, a reset link has been sent",
+    });
+  } catch (e) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// Verify reset token validity (used by the app on screen load)
+authRoutes.get("/verify-reset-token", async (req, res) => {
+  try {
+    const token = req.query.token;
+    if (!token) {
+      return res.status(400).json({ success: false, error: "Missing token" });
+    }
+    const user = await db.collection("users").findOne({
+      resetToken: token,
+      resetTokenExpiresAt: { $gt: new Date() },
+    });
+    if (!user) {
+      return res.status(400).json({ success: false, error: "Invalid or already used link" });
+    }
+    return res.json({ success: true });
+  } catch (e) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// Reset password with token
+authRoutes.post("/reset-password", async (req, res) => {
+  try {
+    const token = req.body?.token;
+    const newPassword = req.body?.newPassword;
+
+    if (!token || !newPassword) {
+      return res
+        .status(400)
+        .json({ success: false, error: "Token and new password are required" });
+    }
+
+    if (!isStrongPassword(newPassword)) {
+      return res.status(400).json({
+        success: false,
+        error: "Weak password",
+        field: "password",
+      });
+    }
+
+    const user = await db.collection("users").findOne({
+      resetToken: token,
+      resetTokenExpiresAt: { $gt: new Date() },
+    });
+
+    if (!user) {
+      return res.status(400).json({
+        success: false,
+        error: "Invalid or expired reset token",
+      });
+    }
+
+    const passwordHash = await bcrypt.hash(newPassword, 10);
+    await db.collection("users").updateOne(
+      { _id: user._id },
+      {
+        $set: {
+          password: passwordHash,
+          updatedAt: new Date(),
+        },
+        $unset: {
+          resetToken: "",
+          resetTokenExpiresAt: "",
+          passwordHash: "",
+        },
+      },
+    );
+
+    const jwtToken = jwt.sign({ id: String(user._id) }, getJwtSecret(), { expiresIn: "30d" });
+    return res.json({ success: true, token: jwtToken, user: sanitizeUser(user) });
+  } catch (e) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// Verify OTP
+authRoutes.post("/verify-otp", async (req, res) => {
+  try {
+    const userId = req.body?.userId;
+    const otp = req.body?.otp;
+
+    if (!userId || !otp) {
+      return res.status(400).json({
+        success: false,
+        error: "User ID and OTP are required",
+      });
+    }
+
+    const user = await db
+      .collection("users")
+      .findOne({ _id: new ObjectId(userId) });
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        error: "User not found",
+      });
+    }
+
+    // Check if OTP exists and is valid
+    if (!user.otp || user.otp !== otp) {
+      return res.status(400).json({
+        success: false,
+        error: "Invalid OTP",
+      });
+    }
+
+    // Check if OTP has expired
+    if (user.otpExpiresAt && new Date() > new Date(user.otpExpiresAt)) {
+      return res.status(400).json({
+        success: false,
+        error: "OTP has expired",
+      });
+    }
+
+    // Mark user as verified and clear OTP
+    await db.collection("users").updateOne(
+      { _id: new ObjectId(userId) },
+      {
+        $set: {
+          verified: true,
+          updatedAt: new Date(),
+        },
+        $unset: {
+          otp: "",
+          otpExpiresAt: "",
+        },
+      },
+    );
+
+    // Lier les demandes d'amis en attente pour cet utilisateur
+    await linkPendingFriendRequests(userId, user.email, user.phone);
+
+    // Generate JWT token
+    const token = jwt.sign({ id: userId }, getJwtSecret(), {
+      expiresIn: "7d",
+    });
+
+    // Get updated user
+    const updatedUser = await db
+      .collection("users")
+      .findOne({ _id: new ObjectId(userId) });
+
+    return res.json({
+      success: true,
+      token,
+      user: sanitizeUser(updatedUser),
+    });
+  } catch (e) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// Resend OTP
+authRoutes.post("/resend-otp", async (req, res) => {
+  try {
+    const { userId } = req.body;
+    if (!userId) {
+      return res.status(400).json({ success: false, error: "User ID is required" });
+    }
+
+    const user = await db.collection("users").findOne({ _id: new ObjectId(userId) });
+    if (!user) {
+      return res.status(404).json({ success: false, error: "User not found" });
+    }
+
+    if (user.verified) {
+      return res.status(400).json({ success: false, error: "User is already verified" });
+    }
+
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
+
+    await db.collection("users").updateOne(
+      { _id: user._id },
+      { $set: { otp, otpExpiresAt, updatedAt: new Date() } }
+    );
+
+    await sendOtpEmail(user.email, otp);
+
+    return res.json({ success: true, message: "OTP resent successfully" });
+  } catch (e) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// ─── Google OAuth ─────────────────────────────────────────────────────────────
+authRoutes.post("/google", async (req, res) => {
+  const { accessToken } = req.body;
+  if (!accessToken) {
+    return res.status(400).json({ success: false, error: "Missing accessToken" });
+  }
+  try {
+    const googleRes = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (!googleRes.ok) {
+      return res.status(401).json({ success: false, error: "Invalid Google token" });
+    }
+    const { sub: googleId, email, name, picture } = await googleRes.json();
+    if (!email) {
+      return res.status(400).json({ success: false, error: "No email returned from Google" });
+    }
+
+    let user = await db.collection("users").findOne({ $or: [{ googleId }, { email }] });
+    if (!user) {
+      const result = await db.collection("users").insertOne({
+        name: name || email.split("@")[0],
+        email,
+        googleId,
+        avatar: picture || null,
+        verified: true,
+        createdAt: new Date(),
+      });
+      user = await db.collection("users").findOne({ _id: result.insertedId });
+    } else if (!user.googleId) {
+      await db.collection("users").updateOne({ _id: user._id }, { $set: { googleId } });
+    }
+
+    const token = jwt.sign({ id: String(user._id) }, getJwtSecret(), { expiresIn: "30d" });
+    return res.json({ success: true, token, user: sanitizeUser(user) });
+  } catch (err) {
+    console.error("[/users/google]", err);
+    return res.status(500).json({ success: false, error: "Google authentication failed" });
+  }
+});
+
+// ─── Apple Sign In ─────────────────────────────────────────────────────────────
+authRoutes.post("/apple", async (req, res) => {
+  const { identityToken, email, fullName } = req.body;
+  if (!identityToken) {
+    return res.status(400).json({ success: false, error: "Missing identityToken" });
+  }
+  try {
+    const parts = identityToken.split(".");
+    if (parts.length !== 3) {
+      return res.status(401).json({ success: false, error: "Invalid Apple token format" });
+    }
+    const payload = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8"));
+    const { sub: appleId, email: tokenEmail } = payload;
+    if (!appleId) {
+      return res.status(401).json({ success: false, error: "Invalid Apple token" });
+    }
+
+    const userEmail = email || tokenEmail || null;
+    const userName = fullName
+      ? `${fullName.givenName || ""} ${fullName.familyName || ""}`.trim()
+      : (userEmail ? userEmail.split("@")[0] : "User");
+
+    let user = await db.collection("users").findOne({
+      $or: [{ appleId }, ...(userEmail ? [{ email: userEmail }] : [])],
+    });
+    if (!user) {
+      const result = await db.collection("users").insertOne({
+        name: userName || "User",
+        email: userEmail,
+        appleId,
+        verified: true,
+        createdAt: new Date(),
+      });
+      user = await db.collection("users").findOne({ _id: result.insertedId });
+    } else if (!user.appleId) {
+      await db.collection("users").updateOne({ _id: user._id }, { $set: { appleId } });
+    }
+
+    const token = jwt.sign({ id: String(user._id) }, getJwtSecret(), { expiresIn: "30d" });
+    return res.json({ success: true, token, user: sanitizeUser(user) });
+  } catch (err) {
+    console.error("[/users/apple]", err);
+    return res.status(500).json({ success: false, error: "Apple authentication failed" });
+  }
+});
+
+app.use("/users", authRoutes);
+
+// Page de redirection pour le reset de mot de passe (lien email → deep link app)
+app.get("/reset-password", async (req, res) => {
+  const token = req.query.token;
+  if (!token) {
+    return res.status(400).send(errorPage("Missing token."));
+  }
+
+  try {
+    const user = await db.collection("users").findOne({
+      resetToken: token,
+      resetTokenExpiresAt: { $gt: new Date() },
+    });
+
+    if (!user) {
+      return res.status(400).send(
+        errorPage("This password reset link is invalid or has already been used."),
+      );
+    }
+
+    const deepLink = `mytripcircle://reset-password?token=${token}`;
+    return res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Reset your password</title>
+  <style>
+    body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; margin: 0; background: #F5F0E8; color: #2A2318; }
+    h2 { font-size: 22px; margin-bottom: 12px; }
+    p { color: #7A6A58; margin-bottom: 24px; text-align: center; max-width: 320px; }
+    a { background: #C4714A; color: white; padding: 14px 28px; border-radius: 12px; text-decoration: none; font-size: 16px; }
+  </style>
+  <script>window.location.href = "${deepLink}";</script>
+</head>
+<body>
+  <h2>MyTripCircle</h2>
+  <p>Tap the button below to reset your password in the app.</p>
+  <a href="${deepLink}">Open the app</a>
+</body>
+</html>`);
+  } catch (e) {
+    return res.status(500).send(errorPage("Something went wrong. Please try again."));
+  }
+});
+
+function errorPage(message) {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Invalid link</title>
+  <style>
+    body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; margin: 0; background: #F5F0E8; color: #2A2318; }
+    h2 { font-size: 22px; margin-bottom: 12px; }
+    p { color: #7A6A58; text-align: center; max-width: 320px; }
+    .icon { font-size: 52px; margin-bottom: 16px; }
+  </style>
+</head>
+<body>
+  <div class="icon">🔒</div>
+  <h2>Invalid link</h2>
+  <p>${message}</p>
+</body>
+</html>`;
+}
+
+// Middleware de logging pour debug
+app.use((req, res, next) => {
+  console.log(`[server] ${req.method} ${req.path}`);
+  next();
+});
+
+app.use("/users", userRoutes);
+
+const PORT = process.env.API_PORT ? parseInt(process.env.API_PORT, 10) : 4000;
+const MONGODB_URI = process.env.MONGODB_URI;
+const DB_NAME = process.env.DB_NAME || "mytripcircle";
+
+// IP depuis .env ou détection automatique
+const ACTIVE_IP =
+  process.env.API_IP_PRIMARY ||
+  (() => {
+    console.log(
+      "[server] API_IP_PRIMARY not set, detecting IP automatically...",
+    );
+    const interfaces = os.networkInterfaces();
+    const priorityInterfaces = ["Wi-Fi", "Ethernet", "en0", "eth0"];
+
+    for (const interfaceName of priorityInterfaces) {
+      if (interfaces[interfaceName]) {
+        for (const iface of interfaces[interfaceName]) {
+          if (iface.family === "IPv4" && !iface.internal) {
+            return iface.address;
+          }
+        }
+      }
+    }
+
+    // Fallback: première IP non-internale
+    for (const name of Object.keys(interfaces)) {
+      for (const iface of interfaces[name]) {
+        if (iface.family === "IPv4" && !iface.internal) {
+          return iface.address;
+        }
+      }
+    }
+
+    return "localhost";
+  })();
+
+let db;
+const trimIfString = (value) =>
+  typeof value === "string" ? value.trim() : value;
+
+async function connectMongo() {
+  const client = new MongoClient(MONGODB_URI);
+  await client.connect();
+  db = client.db(DB_NAME);
+  console.log(`[server] Connected to MongoDB: ${DB_NAME}`);
+  // Best effort: ensure unique emails
+  try {
+    await db.collection("users").createIndex({ email: 1 }, { unique: true });
+  } catch (_) {
+    // ignore
+  }
+
+  // Index pour le cache des itinéraires (recherche par ville+jours, TTL 7 jours)
+  try {
+    await db.collection("itinerary_cache").createIndex({ city: 1, days: 1 });
+    await db.collection("itinerary_cache").createIndex(
+      { createdAt: 1 },
+      { expireAfterSeconds: 604800 }
+    );
+  } catch (_) {
+    // ignore
+  }
+
+  // Index pour le suivi d'usage des itinéraires (rate limiting, TTL 24h)
+  try {
+    await db.collection("itinerary_usage").createIndex({ userId: 1, createdAt: 1 });
+    await db.collection("itinerary_usage").createIndex(
+      { createdAt: 1 },
+      { expireAfterSeconds: 86400 }
+    );
+  } catch (_) {
+    // ignore
+  }
+
+  // Best effort: ensure `phone` is allowed by users collection validator (if any)
+  try {
+    const infos = await db
+      .listCollections({ name: "users" }, { nameOnly: false })
+      .toArray();
+    const info = infos[0];
+    const schema = info?.options?.validator?.$jsonSchema;
+
+    if (schema?.properties && !schema.properties.phone) {
+      const nextSchema = {
+        ...schema,
+        properties: {
+          ...schema.properties,
+          phone: { bsonType: "string" },
+        },
+      };
+
+      await db.command({
+        collMod: "users",
+        validator: { $jsonSchema: nextSchema },
+        validationLevel: info?.options?.validationLevel || "strict",
+        validationAction: info?.options?.validationAction || "error",
+      });
+
+      console.log("[server] users validator updated (phone enabled)");
+    }
+  } catch (e) {
+    console.log("[server] Could not update users validator:", e?.message || e);
+  }
+}
+
+app.get("/health", (_req, res) => {
+  res.json({ ok: true });
+});
+
+app.get("/test", (req, res) => {
+  res.status(200).json({
+    message: "Backend is working!",
+    timestamp: new Date().toISOString(),
+    trips: "Use /trips endpoint",
+    bookings: "Use /bookings endpoint",
+    addresses: "Use /addresses endpoint",
+  });
+});
+
+app.get("/trips", requireAuth, async (req, res) => {
+  try {
+    const userId = String(req.user._id);
+    // Filtrer : voyages où l'utilisateur est propriétaire OU collaborateur
+    const items = await db.collection("trips").find({
+      $or: [
+        { ownerId: userId },
+        { "collaborators.userId": userId }
+      ]
+    }).toArray();
+    res.json(items);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get("/trips/:id", requireAuth, async (req, res) => {
+  try {
+    const userId = String(req.user._id);
+    const item = await db
+      .collection("trips")
+      .findOne({ _id: new ObjectId(req.params.id) });
+    if (!item) return res.status(404).json({ error: "Not found" });
+
+    // Vérifier que l'utilisateur a accès à ce voyage
+    const isOwner = item.ownerId === userId;
+    const isCollaborator = item.collaborators?.some(c => c.userId === userId);
+    const isPublicTrip = item.isPublic || item.visibility === "public";
+
+    if (!isOwner && !isCollaborator && !isPublicTrip) {
+      // Vérifier si visibility === "friends" et que le demandeur est ami avec le propriétaire
+      if (item.visibility === "friends") {
+        const friendship = await db.collection("friends").findOne({
+          userId,
+          friendId: item.ownerId,
+        });
+        if (!friendship) return res.status(403).json({ error: "Access denied" });
+      } else {
+        return res.status(403).json({ error: "Access denied" });
+      }
+    }
+
+    res.json(item);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Créer un nouveau voyage
+app.post("/trips", requireAuth, async (req, res) => {
+  try {
+    const userId = String(req.user._id);
+    const {
+      title,
+      description,
+      destination,
+      startDate,
+      endDate,
+      isPublic,
+      visibility,
+      tags,
+      status,
+    } = req.body;
+
+    console.log("=== CREATE TRIP DEBUG ===");
+    console.log("Request body:", req.body);
+    console.log("User ID from token:", userId);
+
+    // Validation des champs requis
+    if (!title || !destination || !startDate || !endDate) {
+      console.log("Missing required fields");
+      return res.status(400).json({ error: "Missing required fields" });
+    }
+
+    // Validation des dates
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    const now = new Date();
+
+    // Permettre la date du jour (enlever les heures/minutes/secondes pour la comparaison)
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const startDateOnly = new Date(
+      start.getFullYear(),
+      start.getMonth(),
+      start.getDate(),
+    );
+
+    if (start >= end) {
+      console.log("End date must be after start date");
+      return res
+        .status(400)
+        .json({ error: "End date must be after start date" });
+    }
+
+    if (startDateOnly < today) {
+      console.log("Start date cannot be in the past");
+      return res
+        .status(400)
+        .json({ error: "Start date cannot be in the past" });
+    }
+
+    // Déterminer la visibilité basée sur les paramètres reçus
+    const tripVisibility = visibility || (isPublic ? "public" : "private");
+
+    // Créer un voyage avec tous les champs requis selon le schéma MongoDB
+    const trip = {
+      title: title.trim(),
+      description: description ? description.trim() : "",
+      destination: destination.trim(),
+      startDate: start,
+      endDate: end,
+      ownerId: userId, // Utiliser l'ID de l'utilisateur connecté
+      collaborators: [], // Initialiser avec un tableau vide
+      isPublic: isPublic || false,
+      visibility: tripVisibility, // Utiliser la visibilité fournie ou calculée
+      status: status || "draft", // Utiliser le status fourni ou "draft" par défaut
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      stats: {
+        // Ajouter les stats requises
+        totalBookings: 0,
+        totalAddresses: 0,
+        totalCollaborators: 0,
+      },
+      location: {
+        // Ajouter la géolocalisation (coordonnées par défaut pour l'instant)
+        type: "Point",
+        coordinates: [0, 0], // Coordonnées par défaut jusqu'à géolocalisation
+      },
+      tags: tags || [], // Utiliser les tags fournis ou tableau vide
+    };
+
+    console.log("Trip object to insert:", JSON.stringify(trip, null, 2));
+
+    const result = await db.collection("trips").insertOne(trip);
+    console.log("Insert result:", result);
+
+    trip._id = result.insertedId;
+    console.log("Final trip with _id:", trip);
+
+    res.status(201).json(trip);
+  } catch (e) {
+    console.error("Error creating trip:", e);
+    console.error("Error message:", e.message);
+    console.error("Error code:", e.code);
+    console.error("Error details:", e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Modifier un voyage
+app.put("/trips/:id", requireAuth, async (req, res) => {
+  try {
+    const userId = String(req.user._id);
+    const { id } = req.params;
+    const {
+      title,
+      description,
+      destination,
+      startDate,
+      endDate,
+      isPublic,
+      status,
+    } = req.body;
+
+    // Vérifier que le voyage existe
+    const existingTrip = await db
+      .collection("trips")
+      .findOne({ _id: new ObjectId(id) });
+    if (!existingTrip) {
+      return res.status(404).json({ error: "Trip not found" });
+    }
+
+    // Vérifier les permissions
+    const isOwner = existingTrip.ownerId === userId;
+    const isCollaborator = existingTrip.collaborators.some(
+      (collab) => collab.userId === userId && collab.permissions.canEdit,
+    );
+
+    if (!isOwner && !isCollaborator) {
+      return res
+        .status(403)
+        .json({ error: "Not authorized to edit this trip" });
+    }
+
+    // Validation des dates si fournies
+    if (startDate && endDate) {
+      const start = new Date(startDate);
+      const end = new Date(endDate);
+
+      if (start >= end) {
+        return res
+          .status(400)
+          .json({ error: "End date must be after start date" });
+      }
+    }
+
+    const updateData = {
+      updatedAt: new Date(),
+    };
+
+    if (title !== undefined) updateData.title = title.trim();
+    if (description !== undefined) updateData.description = description.trim();
+    if (destination !== undefined) updateData.destination = destination.trim();
+    if (startDate !== undefined) updateData.startDate = new Date(startDate);
+    if (endDate !== undefined) updateData.endDate = new Date(endDate);
+    if (isPublic !== undefined) updateData.isPublic = isPublic;
+    if (status !== undefined) updateData.status = status;
+
+    const result = await db
+      .collection("trips")
+      .updateOne({ _id: new ObjectId(id) }, { $set: updateData });
+
+    if (result.matchedCount === 0) {
+      return res.status(404).json({ error: "Trip not found" });
+    }
+
+    // Récupérer le voyage mis à jour
+    const updatedTrip = await db
+      .collection("trips")
+      .findOne({ _id: new ObjectId(id) });
+    res.json(updatedTrip);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Supprimer un voyage
+app.delete("/trips/:id", requireAuth, async (req, res) => {
+  try {
+    const userId = String(req.user._id);
+    const { id } = req.params;
+
+    // Vérifier que le voyage existe
+    const existingTrip = await db
+      .collection("trips")
+      .findOne({ _id: new ObjectId(id) });
+    if (!existingTrip) {
+      return res.status(404).json({ error: "Trip not found" });
+    }
+
+    // Vérifier les permissions (seul le propriétaire peut supprimer)
+    if (existingTrip.ownerId !== userId) {
+      return res
+        .status(403)
+        .json({ error: "Only the owner can delete this trip" });
+    }
+
+    // Supprimer le voyage et toutes ses données associées
+    await Promise.all([
+      db.collection("trips").deleteOne({ _id: new ObjectId(id) }),
+      db.collection("bookings").deleteMany({ tripId: id }),
+      db.collection("addresses").deleteMany({ tripId: id }),
+      db.collection("invitations").deleteMany({ tripId: id }),
+    ]);
+
+    res.json({ success: true, message: "Trip deleted successfully" });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Retirer un collaborateur d'un voyage
+app.delete("/trips/:id/collaborators/:userId", requireAuth, async (req, res) => {
+  try {
+    const requesterId = String(req.user._id);
+    const { id, userId } = req.params;
+
+    const trip = await db.collection("trips").findOne({ _id: new ObjectId(id) });
+    if (!trip) return res.status(404).json({ error: "Trip not found" });
+    if (trip.ownerId !== requesterId) {
+      return res.status(403).json({ error: "Only the owner can remove members" });
+    }
+    if (userId === requesterId) {
+      return res.status(400).json({ error: "Cannot remove yourself" });
+    }
+
+    await db.collection("trips").updateOne(
+      { _id: new ObjectId(id) },
+      { $pull: { collaborators: { userId } } }
+    );
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Transférer la propriété d'un voyage
+app.put("/trips/:id/transfer-ownership", requireAuth, async (req, res) => {
+  try {
+    const requesterId = String(req.user._id);
+    const { id } = req.params;
+    const { newOwnerId } = req.body;
+
+    if (!newOwnerId) return res.status(400).json({ error: "newOwnerId is required" });
+
+    const trip = await db.collection("trips").findOne({ _id: new ObjectId(id) });
+    if (!trip) return res.status(404).json({ error: "Trip not found" });
+    if (trip.ownerId !== requesterId) {
+      return res.status(403).json({ error: "Only the owner can transfer ownership" });
+    }
+
+    const isCollaborator = trip.collaborators?.some((c) => c.userId === newOwnerId);
+    if (!isCollaborator) {
+      return res.status(400).json({ error: "New owner must already be a member" });
+    }
+
+    // Le nouvel owner devient propriétaire, l'ancien devient éditeur
+    await db.collection("trips").updateOne(
+      { _id: new ObjectId(id) },
+      {
+        $set: { ownerId: newOwnerId },
+        $pull: { collaborators: { userId: newOwnerId } },
+      }
+    );
+    // Ajouter l'ancien propriétaire comme collaborateur
+    await db.collection("trips").updateOne(
+      { _id: new ObjectId(id) },
+      {
+        $push: {
+          collaborators: {
+            userId: requesterId,
+            role: "editor",
+            joinedAt: new Date(),
+            permissions: { canEdit: true, canInvite: true, canDelete: false },
+          },
+        },
+      }
+    );
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Annuler une invitation (par ID)
+app.delete("/invitations/:id", requireAuth, async (req, res) => {
+  try {
+    const userId = String(req.user._id);
+    const { id } = req.params;
+
+    let inv;
+    try {
+      inv = await db.collection("invitations").findOne({ _id: new ObjectId(id) });
+    } catch {
+      inv = null;
+    }
+    if (!inv) return res.status(404).json({ error: "Invitation not found" });
+    if (inv.inviterId !== userId) {
+      return res.status(403).json({ error: "Cannot cancel someone else's invitation" });
+    }
+
+    await db.collection("invitations").deleteOne({ _id: new ObjectId(id) });
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Créer une nouvelle réservation (POST avant GET pour éviter les conflits)
+app.post("/bookings", requireAuth, async (req, res) => {
+  try {
+    const userId = String(req.user._id);
+    const {
+      tripId,
+      type,
+      title,
+      description,
+      date,
+      endDate,
+      time,
+      address,
+      confirmationNumber,
+      price,
+      currency,
+      status,
+      attachments,
+    } = req.body;
+
+    console.log("=== CREATE BOOKING DEBUG ===");
+    console.log("Request body:", req.body);
+
+    // Validation des champs requis
+    if (!type || !title || !date) {
+      console.log("Missing required fields");
+      return res.status(400).json({ error: "Missing required fields" });
+    }
+
+    // Créer la réservation
+    const booking = {
+      tripId: tripId || "",
+      type,
+      title: title.trim(),
+      description: description ? description.trim() : undefined,
+      date: new Date(date),
+      endDate: endDate ? new Date(endDate) : undefined,
+      time: time || undefined,
+      address: address ? address.trim() : undefined,
+      confirmationNumber: confirmationNumber
+        ? confirmationNumber.trim()
+        : undefined,
+      price: price ? parseFloat(price) : undefined,
+      currency: currency || "EUR",
+      status: status || "pending",
+      attachments: attachments || [],
+      userId, // Lier la réservation à l'utilisateur connecté
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    console.log("Booking object to insert:", JSON.stringify(booking, null, 2));
+
+    const result = await db.collection("bookings").insertOne(booking);
+    console.log("Insert result:", result);
+
+    booking._id = result.insertedId;
+    console.log("Final booking with _id:", booking);
+
+    res.status(201).json(booking);
+  } catch (e) {
+    console.error("Error creating booking:", e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get("/bookings", requireAuth, async (req, res) => {
+  try {
+    const userId = String(req.user._id);
+    // Récupérer les réservations uniquement des voyages de l'utilisateur
+    const userTrips = await db.collection("trips").find({
+      $or: [
+        { ownerId: userId },
+        { "collaborators.userId": userId }
+      ]
+    }).project({ _id: 1 }).toArray();
+    const tripIds = userTrips.map(t => String(t._id));
+
+    const items = await db.collection("bookings").find({
+      $or: [
+        { tripId: { $in: tripIds } },
+        { userId, tripId: { $in: ["", null] } },
+        { userId, tripId: { $exists: false } },
+      ]
+    }).toArray();
+    res.json(items);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get("/bookings/trip/:tripId", requireAuth, async (req, res) => {
+  try {
+    const userId = String(req.user._id);
+    const tripId = req.params.tripId;
+
+    // Vérifier que l'utilisateur a accès à ce voyage
+    const trip = await db.collection("trips").findOne({ _id: new ObjectId(tripId) });
+    if (!trip) {
+      return res.status(404).json({ error: "Trip not found" });
+    }
+
+    const isOwner = trip.ownerId === userId;
+    const isCollaborator = trip.collaborators?.some(c => c.userId === userId);
+    const isPublicTrip = trip.isPublic || trip.visibility === "public";
+
+    if (!isOwner && !isCollaborator && !isPublicTrip) {
+      if (trip.visibility === "friends") {
+        const friendship = await db.collection("friends").findOne({ userId, friendId: trip.ownerId });
+        if (!friendship) return res.status(403).json({ error: "Access denied" });
+      } else {
+        return res.status(403).json({ error: "Access denied" });
+      }
+    }
+
+    const items = await db
+      .collection("bookings")
+      .find({ tripId: tripId })
+      .toArray();
+    res.json(items);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Récupérer une réservation par ID (accès public/amis si le voyage l'est)
+app.get("/bookings/:id", requireAuth, async (req, res) => {
+  try {
+    const userId = String(req.user._id);
+    const booking = await db.collection("bookings").findOne({ _id: new ObjectId(req.params.id) });
+    if (!booking) return res.status(404).json({ error: "Not found" });
+
+    const trip = await db.collection("trips").findOne({ _id: new ObjectId(booking.tripId) });
+    if (!trip) return res.status(404).json({ error: "Trip not found" });
+
+    const isOwner = trip.ownerId === userId;
+    const isCollaborator = trip.collaborators?.some(c => c.userId === userId);
+    const isPublicTrip = trip.isPublic || trip.visibility === "public";
+
+    if (!isOwner && !isCollaborator && !isPublicTrip) {
+      if (trip.visibility === "friends") {
+        const friendship = await db.collection("friends").findOne({ userId, friendId: trip.ownerId });
+        if (!friendship) return res.status(403).json({ error: "Access denied" });
+      } else {
+        return res.status(403).json({ error: "Access denied" });
+      }
+    }
+
+    res.json(booking);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Modifier une réservation
+app.put("/bookings/:id", requireAuth, async (req, res) => {
+  try {
+    const userId = String(req.user._id);
+    const { id } = req.params;
+
+    const booking = await db.collection("bookings").findOne({ _id: new ObjectId(id) });
+    if (!booking) return res.status(404).json({ error: "Booking not found" });
+
+    const isCreator = booking.userId === userId;
+    let hasTripAccess = false;
+
+    if (booking.tripId && !isCreator) {
+      const trip = await db.collection("trips").findOne({ _id: new ObjectId(booking.tripId) });
+      if (trip) {
+        hasTripAccess = trip.ownerId === userId || trip.collaborators?.some(c => c.userId === userId && c.permissions.canEdit);
+      }
+    }
+
+    if (!isCreator && !hasTripAccess) {
+      return res.status(403).json({ error: "Access denied" });
+    }
+
+    const allowed = ["type", "title", "description", "date", "endDate", "time", "address", "confirmationNumber", "price", "currency", "status", "attachments"];
+    const updates = {};
+    for (const key of allowed) {
+      if (req.body[key] !== undefined) updates[key] = req.body[key];
+    }
+    updates.updatedAt = new Date();
+
+    await db.collection("bookings").updateOne({ _id: new ObjectId(id) }, { $set: updates });
+    const updated = await db.collection("bookings").findOne({ _id: new ObjectId(id) });
+    res.json(updated);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Supprimer une réservation
+app.delete("/bookings/:id", requireAuth, async (req, res) => {
+  try {
+    const userId = String(req.user._id);
+    const { id } = req.params;
+
+    const booking = await db.collection("bookings").findOne({ _id: new ObjectId(id) });
+    if (!booking) {
+      return res.status(404).json({ error: "Booking not found" });
+    }
+
+    // Vérifier les permissions : soit l'utilisateur est le créateur, soit il a accès au voyage
+    const isCreator = booking.userId === userId;
+    let hasTripAccess = false;
+
+    if (booking.tripId && !isCreator) {
+      const trip = await db.collection("trips").findOne({ _id: new ObjectId(booking.tripId) });
+      if (trip) {
+        hasTripAccess = trip.ownerId === userId || trip.collaborators?.some(c => c.userId === userId && c.permissions.canDelete);
+      }
+    }
+
+    if (!isCreator && !hasTripAccess) {
+      return res.status(403).json({ error: "Access denied" });
+    }
+
+    await db.collection("bookings").deleteOne({ _id: new ObjectId(id) });
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get("/addresses", requireAuth, async (req, res) => {
+  try {
+    const userId = String(req.user._id);
+    // Récupérer les adresses liées aux voyages de l'utilisateur OU les adresses créées par l'utilisateur
+    const userTrips = await db.collection("trips").find({
+      $or: [
+        { ownerId: userId },
+        { "collaborators.userId": userId }
+      ]
+    }).project({ _id: 1 }).toArray();
+    const tripIds = userTrips.map(t => String(t._id));
+
+    const items = await db.collection("addresses").find({
+      $or: [
+        { tripId: { $in: tripIds } },
+        { userId: userId }
+      ]
+    }).toArray();
+    res.json(items);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get("/addresses/trip/:tripId", requireAuth, async (req, res) => {
+  try {
+    const userId = String(req.user._id);
+    const tripId = req.params.tripId;
+
+    // Vérifier que l'utilisateur a accès à ce voyage
+    const trip = await db.collection("trips").findOne({ _id: new ObjectId(tripId) });
+    if (!trip) {
+      return res.status(404).json({ error: "Trip not found" });
+    }
+
+    const isOwner = trip.ownerId === userId;
+    const isCollaborator = trip.collaborators?.some(c => c.userId === userId);
+    const isPublicTrip = trip.isPublic || trip.visibility === "public";
+
+    if (!isOwner && !isCollaborator && !isPublicTrip) {
+      if (trip.visibility === "friends") {
+        const friendship = await db.collection("friends").findOne({ userId, friendId: trip.ownerId });
+        if (!friendship) return res.status(403).json({ error: "Access denied" });
+      } else {
+        return res.status(403).json({ error: "Access denied" });
+      }
+    }
+
+    const items = await db
+      .collection("addresses")
+      .find({ tripId: tripId })
+      .toArray();
+    res.json(items);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get("/addresses/:id", requireAuth, async (req, res) => {
+  try {
+    const userId = String(req.user._id);
+    const { id } = req.params;
+    const item = await db
+      .collection("addresses")
+      .findOne({ _id: new ObjectId(id) });
+    if (!item) {
+      return res.status(404).json({ error: "Address not found" });
+    }
+
+    // Vérifier que l'utilisateur a accès à l'adresse
+    const isOwner = item.userId === userId;
+    let hasTripAccess = false;
+
+    if (item.tripId && !isOwner) {
+      const trip = await db.collection("trips").findOne({ _id: new ObjectId(item.tripId) });
+      if (trip) {
+        hasTripAccess = trip.ownerId === userId || trip.collaborators?.some(c => c.userId === userId);
+      }
+    }
+
+    if (!isOwner && !hasTripAccess) {
+      return res.status(403).json({ error: "Access denied" });
+    }
+
+    res.json(item);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post("/addresses", requireAuth, async (req, res) => {
+  try {
+    const userId = String(req.user._id);
+    const { type, name, address, city, country, phone, website, notes, rating, tripId, photoUrl } =
+      req.body;
+
+    if (!type || !name || !address || !city || !country) {
+      return res.status(400).json({ error: "Missing required fields" });
+    }
+
+    const addressDoc = {
+      type,
+      name: trimIfString(name),
+      address: trimIfString(address),
+      city: trimIfString(city),
+      country: trimIfString(country),
+      phone: phone ? trimIfString(phone) : undefined,
+      website: website ? trimIfString(website) : undefined,
+      notes: notes ? trimIfString(notes) : undefined,
+      rating: typeof rating === "number" ? rating : undefined,
+      photoUrl: photoUrl ? trimIfString(photoUrl) : undefined,
+      tripId: tripId || undefined,
+      userId, // Lier l'adresse à l'utilisateur connecté
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    const result = await db.collection("addresses").insertOne(addressDoc);
+    addressDoc._id = result.insertedId;
+    res.status(201).json(addressDoc);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.put("/addresses/:id", requireAuth, async (req, res) => {
+  try {
+    const userId = String(req.user._id);
+    const { id } = req.params;
+    const existing = await db
+      .collection("addresses")
+      .findOne({ _id: new ObjectId(id) });
+
+    if (!existing) {
+      return res.status(404).json({ error: "Address not found" });
+    }
+
+    // Vérifier que l'utilisateur a accès à l'adresse
+    const isOwner = existing.userId === userId;
+    let hasTripEditAccess = false;
+
+    if (existing.tripId && !isOwner) {
+      const trip = await db.collection("trips").findOne({ _id: new ObjectId(existing.tripId) });
+      if (trip) {
+        hasTripEditAccess = trip.ownerId === userId || trip.collaborators?.some(c => c.userId === userId && c.permissions.canEdit);
+      }
+    }
+
+    if (!isOwner && !hasTripEditAccess) {
+      return res.status(403).json({ error: "Access denied" });
+    }
+
+    const { type, name, address, city, country, phone, website, notes, rating, photoUrl } =
+      req.body;
+
+    const setData = { updatedAt: new Date() };
+    const unsetData = {};
+
+    if (type !== undefined) setData.type = type;
+    if (name !== undefined) setData.name = trimIfString(name);
+    if (address !== undefined) setData.address = trimIfString(address);
+    if (city !== undefined) setData.city = trimIfString(city);
+    if (country !== undefined) setData.country = trimIfString(country);
+
+    if (rating !== undefined) {
+      if (typeof rating === "number") {
+        setData.rating = rating;
+      } else {
+        unsetData.rating = "";
+      }
+    }
+
+    if (phone !== undefined) {
+      if (phone) {
+        setData.phone = trimIfString(phone);
+      } else {
+        unsetData.phone = "";
+      }
+    }
+    if (website !== undefined) {
+      if (website) {
+        setData.website = trimIfString(website);
+      } else {
+        unsetData.website = "";
+      }
+    }
+    if (notes !== undefined) {
+      if (notes) {
+        setData.notes = trimIfString(notes);
+      } else {
+        unsetData.notes = "";
+      }
+    }
+    if (photoUrl !== undefined) {
+      if (photoUrl) {
+        setData.photoUrl = trimIfString(photoUrl);
+      } else {
+        unsetData.photoUrl = "";
+      }
+    }
+
+    const updatePayload = {};
+    if (Object.keys(setData).length > 0) {
+      updatePayload.$set = setData;
+    }
+    if (Object.keys(unsetData).length > 0) {
+      updatePayload.$unset = unsetData;
+    }
+
+    await db
+      .collection("addresses")
+      .updateOne({ _id: new ObjectId(id) }, updatePayload);
+
+    const updated = await db
+      .collection("addresses")
+      .findOne({ _id: new ObjectId(id) });
+
+    res.json(updated);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Supprimer une adresse
+app.delete("/addresses/:id", requireAuth, async (req, res) => {
+  try {
+    const userId = String(req.user._id);
+    const { id } = req.params;
+
+    const address = await db.collection("addresses").findOne({ _id: new ObjectId(id) });
+    if (!address) {
+      return res.status(404).json({ error: "Address not found" });
+    }
+
+    // Vérifier les permissions : soit l'utilisateur est le créateur, soit il a accès au voyage
+    const isCreator = address.userId === userId;
+    let hasTripAccess = false;
+
+    if (address.tripId && !isCreator) {
+      const trip = await db.collection("trips").findOne({ _id: new ObjectId(address.tripId) });
+      if (trip) {
+        hasTripAccess = trip.ownerId === userId || trip.collaborators?.some(c => c.userId === userId && c.permissions.canDelete);
+      }
+    }
+
+    if (!isCreator && !hasTripAccess) {
+      return res.status(403).json({ error: "Access denied" });
+    }
+
+    await db.collection("addresses").deleteOne({ _id: new ObjectId(id) });
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ===== INVITATIONS ENDPOINTS =====
+
+// Créer une invitation
+app.post("/invitations", requireAuth, async (req, res) => {
+  try {
+    const inviterId = String(req.user._id);
+    const { tripId, inviteeEmail, inviteePhone, message, permissions } = req.body;
+
+    // Vérifier qu'au moins email ou téléphone est fourni
+    if (!inviteeEmail && !inviteePhone) {
+      return res.status(400).json({ error: "Email or phone number is required" });
+    }
+
+    // Vérifier que le trip existe
+    const trip = await db.collection("trips").findOne({ _id: new ObjectId(tripId) });
+    if (!trip) {
+      return res.status(404).json({ error: "Trip not found" });
+    }
+
+    // Vérifier que l'inviteur est propriétaire ou collaborateur avec permissions
+    const isOwner = trip.ownerId === inviterId;
+    const isCollaborator = trip.collaborators.some(
+      (collab) => collab.userId === inviterId && collab.permissions.canInvite,
+    );
+
+    if (!isOwner && !isCollaborator) {
+      return res.status(403).json({ error: "Not authorized to invite" });
+    }
+
+    // Vérifier que l'email/téléphone n'est pas déjà collaborateur
+    const existingCollaborator = trip.collaborators.find(
+      (collab) =>
+        (inviteeEmail && (collab.userId === inviteeEmail || collab.email === inviteeEmail)) ||
+        (inviteePhone && collab.phone === inviteePhone),
+    );
+
+    if (existingCollaborator) {
+      return res.status(400).json({ error: "User is already a collaborator" });
+    }
+
+    // Vérifier qu'il n'y a pas d'invitation en attente
+    const inviteQuery = { tripId, status: "pending" };
+    if (inviteeEmail) inviteQuery.inviteeEmail = inviteeEmail;
+    if (inviteePhone) inviteQuery.inviteePhone = inviteePhone;
+
+    const existingInvitation = await db.collection("invitations").findOne(inviteQuery);
+
+    if (existingInvitation) {
+      return res.status(400).json({ error: "Invitation already pending" });
+    }
+
+    // Générer un token unique
+    const token = require("crypto").randomBytes(32).toString("hex");
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 jours
+
+    const invitation = {
+      tripId,
+      inviterId,
+      ...(inviteeEmail && { inviteeEmail }),
+      ...(inviteePhone && { inviteePhone }),
+      status: "pending",
+      token,
+      expiresAt,
+      permissions: permissions || {
+        role: "editor",
+        canEdit: true,
+        canInvite: false,
+        canDelete: false,
+      },
+      message: message || "",
+      createdAt: new Date(),
+      respondedAt: null,
+    };
+
+    const result = await db.collection("invitations").insertOne(invitation);
+    invitation._id = result.insertedId;
+
+    // Envoyer l'email d'invitation (seulement si email fourni)
+    if (transporter && inviteeEmail) {
+      try {
+        const inviter = await db.collection("users").findOne({ _id: new ObjectId(inviterId) });
+        const inviterName = inviter?.name || "Quelqu'un";
+        const invitationLink = `mytripcircle://invitation/${token}`;
+
+        // Détecter la langue du destinataire (s'il a un compte)
+        const inviteeUser = await db.collection("users").findOne({ email: inviteeEmail });
+        const inviteeLang = inviteeUser?.language || "fr";
+
+        const tpl = buildTripInvitationEmail(inviteeLang, {
+          inviterName,
+          tripTitle: trip.title,
+          tripDestination: trip.destination,
+          tripStartDate: trip.startDate,
+          tripEndDate: trip.endDate,
+          message,
+          invitationLink,
+        });
+
+        await transporter.sendMail({
+          from: process.env.MAIL_USER || "noreply@mytripcircle.com",
+          to: inviteeEmail,
+          subject: tpl.subject,
+          html: tpl.html,
+          text: tpl.text,
+        });
+        console.log(`[EMAIL] Invitation sent to ${inviteeEmail} in '${inviteeLang}'`);
+      } catch (emailError) {
+        console.error("[EMAIL] Error sending invitation email:", emailError);
+      }
+    } else {
+      console.log(`[EMAIL] Would send invitation to ${inviteeEmail} (transporter not configured)`);
+    }
+
+    res.status(201).json(invitation);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Récupérer les invitations d'un utilisateur
+app.get("/invitations/user/:email", async (req, res) => {
+  try {
+    const { email } = req.params;
+    const { status } = req.query;
+
+    let query = { inviteeEmail: email };
+    if (status) {
+      query.status = status;
+    }
+
+    const invitations = await db
+      .collection("invitations")
+      .find(query)
+      .toArray();
+
+    // Enrichir avec les données du trip
+    const enrichedInvitations = await Promise.all(
+      invitations.map(async (invitation) => {
+        const trip = await db
+          .collection("trips")
+          .findOne({ _id: new ObjectId(invitation.tripId) });
+        const inviter = await db
+          .collection("users")
+          .findOne({ _id: new ObjectId(invitation.inviterId) });
+
+        return {
+          ...invitation,
+          trip: trip
+            ? {
+                _id: trip._id,
+                title: trip.title,
+                destination: trip.destination,
+                startDate: trip.startDate,
+                endDate: trip.endDate,
+              }
+            : null,
+          inviter: inviter
+            ? {
+                _id: inviter._id,
+                name: inviter.name,
+                email: inviter.email,
+                avatar: inviter.avatar,
+              }
+            : null,
+        };
+      }),
+    );
+
+    res.json(enrichedInvitations);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Récupérer une invitation par token (pour le lien d'invitation)
+app.get("/invitations/token/:token", async (req, res) => {
+  try {
+    const { token } = req.params;
+
+    const invitation = await db.collection("invitations").findOne({ token });
+    if (!invitation) {
+      return res.status(404).json({ error: "Invitation not found" });
+    }
+
+    // Enrichir avec les données du trip et de l'inviteur
+    const trip = await db.collection("trips").findOne({ _id: new ObjectId(invitation.tripId) });
+    const inviter = await db.collection("users").findOne({ _id: new ObjectId(invitation.inviterId) });
+
+    const enrichedInvitation = {
+      ...invitation,
+      trip: trip
+        ? {
+            _id: trip._id,
+            title: trip.title,
+            destination: trip.destination,
+            startDate: trip.startDate,
+            endDate: trip.endDate,
+            coverImage: trip.coverImage,
+            description: trip.description,
+          }
+        : null,
+      inviter: inviter
+        ? {
+            _id: inviter._id,
+            name: inviter.name,
+            email: inviter.email,
+            avatar: inviter.avatar,
+          }
+        : null,
+    };
+
+    res.json(enrichedInvitation);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Redirection HTTPS vers le deep link (pour que le lien soit cliquable dans les messageries)
+app.get("/join/:token", async (req, res) => {
+  const { token } = req.params;
+  const invitation = await db.collection("invitations").findOne({ token }).catch(() => null);
+  if (!invitation) {
+    return res.status(404).send(`
+      <html><body style="font-family:sans-serif;text-align:center;padding:60px">
+        <h2>Invalid or expired link</h2>
+        <p>This invitation link is no longer valid.</p>
+      </body></html>
+    `);
+  }
+  // Redirige vers le deep link — iOS/Android ouvre l'app si elle est installée
+  res.redirect(`mytripcircle://invitation/${token}`);
+});
+
+// Créer ou récupérer un lien d'invitation partageable pour un voyage
+// Paramètre body optionnel { force: true } pour renouveler le lien (invalide l'ancien)
+app.post("/invitations/trip-link/:tripId", requireAuth, async (req, res) => {
+  try {
+    const inviterId = String(req.user._id);
+    const { tripId } = req.params;
+    const { force } = req.body;
+
+    const trip = await db.collection("trips").findOne({ _id: new ObjectId(tripId) });
+    if (!trip) {
+      return res.status(404).json({ error: "Trip not found" });
+    }
+
+    const isOwner = trip.ownerId === inviterId;
+    const isCollaborator = trip.collaborators.some(
+      (collab) => collab.userId === inviterId && collab.permissions.canInvite,
+    );
+
+    if (!isOwner && !isCollaborator) {
+      return res.status(403).json({ error: "Not authorized to create invitation link" });
+    }
+
+    // Supprimer le lien existant si renouvellement forcé
+    if (force) {
+      await db.collection("invitations").deleteMany({ tripId, inviterId, type: "link" });
+    } else {
+      // Réutiliser le lien existant si disponible
+      const existingLink = await db.collection("invitations").findOne({
+        tripId,
+        inviterId,
+        type: "link",
+      });
+
+      if (existingLink) {
+        return res.json({
+          token: existingLink.token,
+          link: `https://mytripcircle-api.enzo-turpin.fr/join/${existingLink.token}`,
+        });
+      }
+    }
+
+    const token = require("crypto").randomBytes(32).toString("hex");
+    const invitation = {
+      tripId,
+      inviterId,
+      type: "link",
+      status: "pending",
+      token,
+      permissions: { role: "editor", canEdit: true, canInvite: false, canDelete: false },
+      createdAt: new Date(),
+      usageCount: 0,
+    };
+
+    await db.collection("invitations").insertOne(invitation);
+
+    res.status(201).json({
+      token,
+      link: `https://mytripcircle-api.enzo-turpin.fr/join/${token}`,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Accepter/Refuser une invitation
+app.put("/invitations/:token", async (req, res) => {
+  try {
+    const { token } = req.params;
+    const { action, userId } = req.body; // action: "accept" ou "decline"
+
+    if (!["accept", "decline"].includes(action)) {
+      return res.status(400).json({ error: "Invalid action" });
+    }
+
+    const invitation = await db.collection("invitations").findOne({ token });
+    if (!invitation) {
+      return res.status(404).json({ error: "Invitation not found" });
+    }
+
+    // Traitement spécial pour les invitations de type lien (réutilisables)
+    if (invitation.type === "link") {
+      if (action === "decline") {
+        return res.json({ success: true, status: "declined", message: "Invitation declined" });
+      }
+
+      if (!userId) {
+        return res.status(400).json({ error: "userId is required to join via link" });
+      }
+
+      const trip = await db.collection("trips").findOne({ _id: new ObjectId(invitation.tripId) });
+      if (!trip) {
+        return res.status(404).json({ error: "Trip not found" });
+      }
+
+      // Vérifier que l'utilisateur n'est pas déjà collaborateur
+      const alreadyCollab = trip.collaborators.some((c) => c.userId === userId);
+      if (alreadyCollab || trip.ownerId === userId) {
+        return res.json({ success: true, status: "accepted", message: "Already a member" });
+      }
+
+      await db.collection("invitations").updateOne(
+        { _id: invitation._id },
+        { $inc: { usageCount: 1 } },
+      );
+
+      const linkPerms = invitation.permissions || { role: "editor", canEdit: true, canInvite: false, canDelete: false };
+      const collaborator = {
+        userId,
+        role: linkPerms.role,
+        joinedAt: new Date(),
+        permissions: linkPerms,
+        invitedBy: invitation.inviterId,
+      };
+
+      await db
+        .collection("trips")
+        .updateOne(
+          { _id: new ObjectId(invitation.tripId) },
+          { $push: { collaborators: collaborator } },
+        );
+
+      return res.json({ success: true, status: "accepted", message: "Joined trip successfully" });
+    }
+
+    // Invitation directe (email / téléphone)
+    if (new Date() > invitation.expiresAt) {
+      await db
+        .collection("invitations")
+        .updateOne({ _id: invitation._id }, { $set: { status: "expired" } });
+      return res.status(400).json({ error: "Invitation has expired" });
+    }
+
+    if (invitation.status !== "pending") {
+      return res.status(400).json({ error: "Invitation already processed" });
+    }
+
+    const newStatus = action === "accept" ? "accepted" : "declined";
+    const defaultPermissions = { role: "editor", canEdit: true, canInvite: false, canDelete: false };
+
+    if (action === "accept") {
+      const permissions = invitation.permissions || defaultPermissions;
+      const collaborator = {
+        userId: userId || invitation.inviteeEmail,
+        role: permissions.role,
+        joinedAt: new Date(),
+        permissions,
+        invitedBy: invitation.inviterId,
+      };
+
+      await db
+        .collection("trips")
+        .updateOne(
+          { _id: new ObjectId(invitation.tripId) },
+          { $push: { collaborators: collaborator } },
+        );
+    }
+
+    await db.collection("invitations").updateOne(
+      { _id: invitation._id },
+      { $set: { status: newStatus, respondedAt: new Date() } },
+    );
+
+    res.json({
+      success: true,
+      status: newStatus,
+      message: action === "accept" ? "Invitation accepted" : "Invitation declined",
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Récupérer les invitations envoyées par un utilisateur
+app.get("/invitations/sent/:userId", async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { status } = req.query;
+
+    let query = { inviterId: userId };
+    if (status) {
+      query.status = status;
+    }
+
+    const invitations = await db
+      .collection("invitations")
+      .find(query)
+      .toArray();
+
+    // Enrichir avec les données du trip
+    const enrichedInvitations = await Promise.all(
+      invitations.map(async (invitation) => {
+        const trip = await db
+          .collection("trips")
+          .findOne({ _id: new ObjectId(invitation.tripId) });
+
+        return {
+          ...invitation,
+          trip: trip
+            ? {
+                _id: trip._id,
+                title: trip.title,
+                destination: trip.destination,
+                startDate: trip.startDate,
+                endDate: trip.endDate,
+              }
+            : null,
+        };
+      }),
+    );
+
+    res.json(enrichedInvitations);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Récupérer les infos de plusieurs utilisateurs par leurs IDs
+app.post("/users/batch", requireAuth, async (req, res) => {
+  try {
+    const { ids } = req.body;
+
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: "IDs array is required" });
+    }
+
+    // Convertir les IDs en ObjectIds
+    const objectIds = ids.map((id) => {
+      try {
+        return new ObjectId(id);
+      } catch {
+        return null;
+      }
+    }).filter((id) => id !== null);
+
+    const users = await db
+      .collection("users")
+      .find({ _id: { $in: objectIds } })
+      .toArray();
+
+    // Sanitizer les utilisateurs
+    const sanitizedUsers = users.map((user) => ({
+      _id: user._id,
+      id: user._id.toString(),
+      name: user.name,
+      email: user.email,
+      avatar: user.avatar,
+    }));
+
+    res.json(sanitizedUsers);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ===== FRIENDS ENDPOINTS =====
+
+// Envoyer une demande d'ami
+app.post("/friends/request", requireAuth, async (req, res) => {
+  try {
+    const senderId = String(req.user._id);
+    const { recipientEmail, recipientPhone, recipientId: recipientIdParam } = req.body;
+
+    if (!recipientEmail && !recipientPhone && !recipientIdParam) {
+      return res.status(400).json({ error: "Email or phone number is required" });
+    }
+
+    const sender = await db.collection("users").findOne({ _id: new ObjectId(senderId) });
+
+    // Vérifier si l'utilisateur essaie de s'ajouter lui-même
+    if (
+      recipientIdParam === senderId ||
+      (recipientEmail && sender?.email && recipientEmail.toLowerCase() === sender.email.toLowerCase()) ||
+      (recipientPhone && sender?.phone && recipientPhone === sender.phone)
+    ) {
+      return res.status(400).json({ error: "Cannot send friend request to yourself" });
+    }
+
+    // Vérifier si l'utilisateur existe déjà (par ID, email ou téléphone)
+    let recipientUser = null;
+    if (recipientIdParam) {
+      recipientUser = await db.collection("users").findOne({ _id: new ObjectId(recipientIdParam) });
+    }
+    if (!recipientUser && recipientEmail) {
+      recipientUser = await db.collection("users").findOne({ email: recipientEmail });
+    }
+    if (!recipientUser && recipientPhone) {
+      recipientUser = await db.collection("users").findOne({ phone: recipientPhone });
+    }
+
+    // Double vérification par ID au cas où
+    if (recipientUser && String(recipientUser._id) === senderId) {
+      return res.status(400).json({ error: "Cannot send friend request to yourself" });
+    }
+
+    // Vérifier s'ils sont déjà amis
+    if (recipientUser) {
+      const recipientId = String(recipientUser._id);
+
+      const existingFriendship = await db.collection("friends").findOne({
+        $or: [
+          { userId: senderId, friendId: recipientId },
+          { userId: recipientId, friendId: senderId },
+        ],
+      });
+
+      if (existingFriendship) {
+        return res.status(400).json({ error: "Already friends" });
+      }
+
+      // Si le destinataire a déjà envoyé une demande en attente → l'accepter directement
+      const incomingRequest = await db.collection("friendRequests").findOne({
+        senderId: recipientId,
+        recipientId: senderId,
+        status: "pending",
+      });
+
+      if (incomingRequest) {
+        const now = new Date();
+        await db.collection("friendRequests").updateOne(
+          { _id: incomingRequest._id },
+          { $set: { status: "accepted", respondedAt: now } }
+        );
+        await db.collection("friends").insertMany([
+          { userId: senderId, friendId: recipientId, name: recipientUser.name, email: recipientUser.email, phone: recipientUser.phone, createdAt: now },
+          { userId: recipientId, friendId: senderId, name: sender?.name || "Quelqu'un", email: sender?.email, phone: sender?.phone, createdAt: now },
+        ]);
+        return res.json({ success: true, autoAccepted: true });
+      }
+
+      // Vérifier si une demande est déjà en attente (envoyée par moi)
+      const existingRequest = await db.collection("friendRequests").findOne({
+        senderId,
+        recipientId,
+        status: "pending",
+      });
+
+      if (existingRequest) {
+        return res.status(400).json({ error: "Friend request already pending" });
+      }
+    } else {
+      // Pour les utilisateurs sans compte, vérifier s'il y a une demande en attente
+      const existingRequestQuery = { senderId, recipientId: null, status: "pending" };
+      if (recipientEmail) {
+        existingRequestQuery.recipientEmail = recipientEmail;
+      }
+      if (recipientPhone) {
+        existingRequestQuery.recipientPhone = recipientPhone;
+      }
+
+      const existingRequest = await db.collection("friendRequests").findOne(existingRequestQuery);
+
+      if (existingRequest) {
+        return res.status(400).json({ error: "Friend request already pending" });
+      }
+    }
+
+    // Créer la demande d'ami
+    const friendRequest = {
+      senderId,
+      senderName: sender?.name || "Quelqu'un",
+      recipientId: recipientUser ? String(recipientUser._id) : null,
+      recipientEmail,
+      recipientPhone,
+      status: "pending",
+      createdAt: new Date(),
+    };
+
+    const result = await db.collection("friendRequests").insertOne(friendRequest);
+    friendRequest._id = result.insertedId;
+
+    // Envoyer un email si le destinataire a un compte
+    if (recipientUser && transporter) {
+      const recipientLang = recipientUser.language || "fr";
+      const senderDisplayName = sender?.name || "Quelqu'un";
+      const tpl = buildFriendRequestEmail(recipientLang, senderDisplayName);
+      transporter.sendMail({
+        from: process.env.MAIL_USER || "noreply@mytripcircle.com",
+        to: recipientUser.email,
+        subject: tpl.subject,
+        html: tpl.html,
+      }).catch((emailError) => {
+        console.error("Error sending friend request email:", emailError);
+      });
+    }
+
+    res.json(friendRequest);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Récupérer les demandes d'amis (reçues + envoyées en attente)
+app.get("/friends/requests", requireAuth, async (req, res) => {
+  try {
+    const userId = String(req.user._id);
+
+    // Demandes reçues
+    const received = await db
+      .collection("friendRequests")
+      .find({ recipientId: userId, status: "pending" })
+      .sort({ createdAt: -1 })
+      .toArray();
+
+    // Demandes envoyées en attente
+    const sent = await db
+      .collection("friendRequests")
+      .find({ senderId: userId, status: "pending" })
+      .sort({ createdAt: -1 })
+      .toArray();
+
+    const seenIds = new Set();
+    const all = [...received, ...sent].filter((r) => {
+      const id = r._id.toString();
+      if (seenIds.has(id)) return false;
+      seenIds.add(id);
+      return true;
+    });
+
+    // Récupérer les amis actuels de l'utilisateur connecté
+    const myFriendDocs = await db.collection("friends").find({ userId }).toArray();
+    const myFriendIds = new Set(myFriendDocs.map((f) => f.friendId));
+
+    // Calculer les amis en commun pour chaque demande reçue
+    const commonFriendsMap = {};
+    if (received.length > 0) {
+      const senderIdList = received.map((r) => r.senderId).filter(Boolean);
+      const senderFriendDocs = await db
+        .collection("friends")
+        .find({ userId: { $in: senderIdList } })
+        .toArray();
+      const senderFriendsByUser = {};
+      senderFriendDocs.forEach((f) => {
+        if (!senderFriendsByUser[f.userId]) senderFriendsByUser[f.userId] = [];
+        senderFriendsByUser[f.userId].push(f.friendId);
+      });
+      received.forEach((r) => {
+        const senderFriends = senderFriendsByUser[r.senderId] || [];
+        commonFriendsMap[r._id.toString()] = senderFriends.filter((id) => myFriendIds.has(id)).length;
+      });
+    }
+
+    // Récupérer le nom des destinataires pour les demandes envoyées
+    const recipientNameMap = {};
+    if (sent.length > 0) {
+      const recipientIdList = sent.map((r) => r.recipientId).filter(Boolean);
+      if (recipientIdList.length > 0) {
+        const recipientUsers = await db
+          .collection("users")
+          .find({ _id: { $in: recipientIdList.map((id) => { try { return new ObjectId(id); } catch { return null; } }).filter(Boolean) } })
+          .project({ _id: 1, firstName: 1, lastName: 1, name: 1 })
+          .toArray();
+        recipientUsers.forEach((u) => {
+          const fullName = u.name || [u.firstName, u.lastName].filter(Boolean).join(" ") || null;
+          recipientNameMap[String(u._id)] = fullName;
+        });
+      }
+    }
+
+    const formattedRequests = all.map((r) => ({
+      id: r._id.toString(),
+      senderId: r.senderId,
+      senderName: r.senderName,
+      recipientId: r.recipientId,
+      recipientName: recipientNameMap[r.recipientId] || null,
+      recipientEmail: r.recipientEmail,
+      recipientPhone: r.recipientPhone,
+      status: r.status,
+      createdAt: r.createdAt,
+      respondedAt: r.respondedAt,
+      commonFriends: commonFriendsMap[r._id.toString()] ?? undefined,
+    }));
+
+    res.json(formattedRequests);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Annuler une demande d'ami envoyée
+app.delete("/friends/requests/:requestId", requireAuth, async (req, res) => {
+  try {
+    const { requestId } = req.params;
+    const userId = String(req.user._id);
+
+    const request = await db.collection("friendRequests").findOne({
+      _id: new ObjectId(requestId),
+      senderId: userId,
+      status: "pending",
+    });
+
+    if (!request) {
+      return res.status(404).json({ error: "Request not found or already processed" });
+    }
+
+    await db.collection("friendRequests").deleteOne({ _id: new ObjectId(requestId) });
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Suggestions d'amis (amis d'amis)
+app.get("/friends/suggestions", requireAuth, async (req, res) => {
+  try {
+    const userId = String(req.user._id);
+
+    // Récupérer mes amis
+    const myFriends = await db.collection("friends").find({ userId }).toArray();
+    const myFriendIds = myFriends.map((f) => f.friendId);
+
+    if (myFriendIds.length === 0) {
+      return res.json([]);
+    }
+
+    // Récupérer les amis de mes amis
+    const friendsOfFriends = await db
+      .collection("friends")
+      .find({ userId: { $in: myFriendIds }, friendId: { $ne: userId } })
+      .toArray();
+
+    // Compter combien d'amis en commun par utilisateur
+    const commonCount = {};
+    for (const fof of friendsOfFriends) {
+      if (fof.friendId === userId) continue;
+      if (myFriendIds.includes(fof.friendId)) continue; // déjà ami
+      commonCount[fof.friendId] = (commonCount[fof.friendId] || 0) + 1;
+    }
+
+    const suggestionIds = Object.keys(commonCount);
+    if (suggestionIds.length === 0) return res.json([]);
+
+    // Vérifier les demandes en attente pour ne pas re-suggérer
+    const pendingRequests = await db.collection("friendRequests").find({
+      $or: [
+        { senderId: userId, recipientId: { $in: suggestionIds }, status: "pending" },
+        { senderId: { $in: suggestionIds }, recipientId: userId, status: "pending" },
+      ],
+    }).toArray();
+    const pendingIds = new Set([
+      ...pendingRequests.map((r) => r.recipientId),
+      ...pendingRequests.map((r) => r.senderId),
+    ]);
+
+    // Récupérer les infos des utilisateurs suggérés
+    const validIds = suggestionIds.filter((id) => !pendingIds.has(id));
+    if (validIds.length === 0) return res.json([]);
+
+    const users = await db
+      .collection("users")
+      .find({ _id: { $in: validIds.map((id) => { try { return new ObjectId(id); } catch { return null; } }).filter(Boolean) } })
+      .project({ _id: 1, name: 1, email: 1, avatar: 1 })
+      .limit(10)
+      .toArray();
+
+    const suggestions = users.map((u) => ({
+      id: String(u._id),
+      name: u.name || "Utilisateur",
+      email: u.email,
+      avatar: u.avatar || null,
+      commonFriends: commonCount[String(u._id)] || 0,
+    }));
+
+    // Trier par nombre d'amis en commun décroissant
+    suggestions.sort((a, b) => b.commonFriends - a.commonFriends);
+
+    res.json(suggestions);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Répondre à une demande d'ami
+app.put("/friends/requests/:requestId", requireAuth, async (req, res) => {
+  try {
+    const { requestId } = req.params;
+    const { action } = req.body; // "accept" ou "decline"
+
+    if (!["accept", "decline"].includes(action)) {
+      return res.status(400).json({ error: "Invalid action" });
+    }
+
+    const request = await db.collection("friendRequests").findOne({
+      _id: new ObjectId(requestId),
+    });
+
+    if (!request) {
+      return res.status(404).json({ error: "Friend request not found" });
+    }
+
+    if (request.status !== "pending") {
+      return res.status(400).json({ error: "Friend request already processed" });
+    }
+
+    // Mettre à jour le statut de la demande
+    if (action === "decline") {
+      // Supprimer la demande pour permettre une nouvelle future
+      await db.collection("friendRequests").deleteOne({ _id: new ObjectId(requestId) });
+    } else {
+      // Accepter : mettre à jour le statut
+      await db.collection("friendRequests").updateOne(
+        { _id: new ObjectId(requestId) },
+        { $set: { status: "accepted", respondedAt: new Date() } }
+      );
+    }
+
+    // Si accepté, créer l'amitié dans les deux sens
+    if (action === "accept") {
+      const now = new Date();
+
+      // Récupérer les infos du sender
+      const sender = await db.collection("users").findOne({ _id: new ObjectId(request.senderId) });
+
+      await db.collection("friends").insertMany([
+        {
+          userId: request.senderId,
+          friendId: request.recipientId,
+          name: req.user.name,
+          email: req.user.email,
+          phone: req.user.phone,
+          createdAt: now,
+        },
+        {
+          userId: request.recipientId,
+          friendId: request.senderId,
+          name: sender?.name || request.senderName,
+          email: sender?.email,
+          phone: sender?.phone,
+          createdAt: now,
+        },
+      ]);
+    }
+
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Récupérer la liste d'amis
+app.get("/friends", requireAuth, async (req, res) => {
+  try {
+    const userId = String(req.user._id);
+
+    const friends = await db
+      .collection("friends")
+      .find({ userId })
+      .sort({ createdAt: -1 })
+      .toArray();
+
+    // Récupérer les avatars à jour depuis la collection users
+    const friendObjectIds = friends.map((f) => {
+      try { return new ObjectId(f.friendId); } catch { return null; }
+    }).filter(Boolean);
+
+    const usersData = friendObjectIds.length > 0
+      ? await db.collection("users").find({ _id: { $in: friendObjectIds } }, { projection: { _id: 1, avatar: 1 } }).toArray()
+      : [];
+    const avatarMap = new Map(usersData.map((u) => [String(u._id), u.avatar || null]));
+
+    const formattedFriends = friends.map((friend) => ({
+      id: friend._id.toString(),
+      userId: friend.userId,
+      friendId: friend.friendId,
+      name: friend.name,
+      email: friend.email,
+      phone: friend.phone,
+      avatar: avatarMap.get(friend.friendId) ?? friend.avatar ?? null,
+      createdAt: friend.createdAt,
+    }));
+
+    res.json(formattedFriends);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Supprimer un ami
+app.delete("/friends/:friendId", requireAuth, async (req, res) => {
+  try {
+    const { friendId } = req.params;
+    const userId = String(req.user._id);
+
+    // Supprimer l'amitié dans les deux sens
+    await db.collection("friends").deleteMany({
+      $or: [
+        { userId, friendId },
+        { userId: friendId, friendId: userId },
+      ],
+    });
+
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Recherche d'un utilisateur par email ou téléphone (pour ajouter un ami)
+app.get("/users/lookup", requireAuth, async (req, res) => {
+  try {
+    const userId = String(req.user._id);
+    const { email, phone } = req.query;
+    if (!email && !phone) return res.status(400).json({ error: "email or phone required" });
+
+    const query = email
+      ? { email: email.toLowerCase().trim() }
+      : { phone: phone.trim() };
+
+    const found = await db.collection("users").findOne(query);
+    if (!found) return res.status(404).json({ error: "User not found" });
+    if (String(found._id) === userId) return res.status(400).json({ error: "Cannot add yourself" });
+
+    const foundId = String(found._id);
+
+    // Nombre de voyages
+    const totalTrips = await db.collection("trips").countDocuments({
+      $or: [{ ownerId: foundId }, { "collaborators.userId": foundId }],
+    });
+
+    // Pays visités (destinations uniques)
+    const trips = await db.collection("trips").find({
+      $or: [{ ownerId: foundId }, { "collaborators.userId": foundId }],
+    }).project({ destination: 1 }).toArray();
+    const countries = new Set(trips.map((t) => t.destination).filter(Boolean)).size;
+
+    // Amis en commun
+    const myFriends = await db.collection("friends").find({ userId }).toArray();
+    const myFriendIds = new Set(myFriends.map((f) => f.friendId));
+    const theirFriends = await db.collection("friends").find({ userId: foundId }).toArray();
+    const commonFriends = theirFriends.filter((f) => myFriendIds.has(f.friendId)).length;
+
+    // Statut de relation
+    const alreadyFriend = await db.collection("friends").findOne({ userId, friendId: foundId });
+    const pendingSent = await db.collection("friendRequests").findOne({ senderId: userId, recipientId: foundId, status: "pending" });
+    const pendingReceived = await db.collection("friendRequests").findOne({ senderId: foundId, recipientId: userId, status: "pending" });
+
+    res.json({
+      id: foundId,
+      name: found.name,
+      email: found.email,
+      avatar: found.avatar || null,
+      stats: { totalTrips, countries, commonFriends },
+      relation: alreadyFriend ? "friend" : pendingSent ? "pending_sent" : pendingReceived ? "pending_received" : "none",
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Profil d'un utilisateur (ami ou non)
+app.get("/friends/:friendId/profile", requireAuth, async (req, res) => {
+  try {
+    const userId = String(req.user._id);
+    const { friendId } = req.params;
+
+    const friendUser = await db.collection("users").findOne({ _id: new ObjectId(friendId) });
+    if (!friendUser) return res.status(404).json({ error: "User not found" });
+
+    // Vérifier si l'utilisateur est ami avec la personne
+    const friendship = await db.collection("friends").findOne({ userId, friendId });
+    const isFriend = !!friendship;
+    const friendSince = friendship?.createdAt || null;
+
+    // Tous les voyages de l'ami (pour les stats)
+    const friendTrips = await db.collection("trips").find({
+      $or: [
+        { ownerId: friendId },
+        { "collaborators.userId": friendId },
+      ],
+    }).toArray();
+
+    // Pays visités par l'ami (destinations uniques)
+    const countries = new Set(friendTrips.map((t) => t.destination).filter(Boolean));
+
+    // Voyages en commun (seulement si ami)
+    let commonTrips = [];
+    if (isFriend) {
+      const myTrips = await db.collection("trips").find({
+        $or: [
+          { ownerId: userId },
+          { "collaborators.userId": userId },
+        ],
+      }).project({ _id: 1 }).toArray();
+      const myTripIds = new Set(myTrips.map((t) => String(t._id)));
+      commonTrips = friendTrips.filter((t) => myTripIds.has(String(t._id)));
+    }
+
+    // Amis en commun
+    const myFriends = await db.collection("friends").find({ userId }).project({ friendId: 1 }).toArray();
+    const myFriendIds = new Set(myFriends.map((f) => f.friendId));
+    const friendFriends = await db.collection("friends").find({ userId: friendId }).project({ friendId: 1 }).toArray();
+    const commonFriendsCount = friendFriends.filter((f) => myFriendIds.has(f.friendId)).length;
+
+    // Réservations de l'ami
+    const totalBookings = await db.collection("bookings").countDocuments({ userId: friendId });
+
+    // Trips visibles : si ami → friends + public, sinon → public uniquement
+    const visibilityFilter = isFriend
+      ? { $in: ["friends", "public"] }
+      : "public";
+    const sharedTrips = await db.collection("trips").find({
+      ownerId: friendId,
+      visibility: visibilityFilter,
+    }).sort({ createdAt: -1 }).toArray();
+
+    const formatTrip = (t) => ({
+      id: String(t._id),
+      title: t.title,
+      destination: t.destination,
+      startDate: t.startDate,
+      endDate: t.endDate,
+      coverImage: t.coverImage || null,
+      status: t.status,
+      visibility: t.visibility || (t.isPublic ? "public" : "private"),
+    });
+
+    const isPublicProfile = friendUser.isPublicProfile === true;
+
+    // Si profil privé : retourner uniquement les infos de base, aucun voyage
+    if (!isPublicProfile) {
+      return res.json({
+        id: String(friendUser._id),
+        name: friendUser.name,
+        avatar: friendUser.avatar || null,
+        isFriend,
+        friendSince,
+        isPublicProfile: false,
+        stats: null,
+        commonTrips: [],
+        sharedTrips: [],
+      });
+    }
+
+    res.json({
+      id: String(friendUser._id),
+      name: friendUser.name,
+      email: friendUser.email,
+      avatar: friendUser.avatar || null,
+      isFriend,
+      friendSince,
+      isPublicProfile: true,
+      stats: {
+        commonTrips: commonTrips.length,
+        totalTrips: friendTrips.length,
+        countries: countries.size,
+        commonFriends: commonFriendsCount,
+        totalBookings,
+      },
+      commonTrips: commonTrips.map(formatTrip),
+      sharedTrips: sharedTrips.map(formatTrip),
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Liens d'invitation ami ────────────────────────────────────────────────────
+
+// Générer ou récupérer le lien d'invitation ami personnel
+app.post("/friends/invite-link", requireAuth, async (req, res) => {
+  try {
+    const userId = String(req.user._id);
+
+    const existing = await db.collection("friendInviteLinks").findOne({ userId });
+    if (existing) {
+      return res.json({ token: existing.token, link: `mytripcircle://friend-invite/${existing.token}` });
+    }
+
+    const token = require("crypto").randomBytes(32).toString("hex");
+    await db.collection("friendInviteLinks").insertOne({ userId, token, createdAt: new Date() });
+
+    res.json({ token, link: `mytripcircle://friend-invite/${token}` });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Récupérer les infos du propriétaire d'un lien (sans auth)
+app.get("/friends/invite-link/:token", async (req, res) => {
+  try {
+    const { token } = req.params;
+    const link = await db.collection("friendInviteLinks").findOne({ token });
+    if (!link) return res.status(404).json({ error: "Invitation link not found" });
+
+    const owner = await db.collection("users").findOne({ _id: new ObjectId(link.userId) });
+    if (!owner) return res.status(404).json({ error: "User not found" });
+
+    res.json({ userId: String(owner._id), name: owner.name, avatar: owner.avatar || null });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Accepter une invitation ami via lien
+app.post("/friends/invite-link/:token/accept", requireAuth, async (req, res) => {
+  try {
+    const { token } = req.params;
+    const currentUserId = String(req.user._id);
+
+    const link = await db.collection("friendInviteLinks").findOne({ token });
+    if (!link) return res.status(404).json({ error: "Invitation link not found" });
+
+    const ownerId = link.userId;
+
+    if (ownerId === currentUserId) {
+      return res.status(400).json({ error: "You cannot add yourself" });
+    }
+
+    const existingFriendship = await db.collection("friends").findOne({
+      $or: [
+        { userId: currentUserId, friendId: ownerId },
+        { userId: ownerId, friendId: currentUserId },
+      ],
+    });
+    if (existingFriendship) return res.status(400).json({ error: "You are already friends" });
+
+    const owner = await db.collection("users").findOne({ _id: new ObjectId(ownerId) });
+    const currentUser = req.user;
+
+    if (!owner) return res.status(404).json({ error: "User not found" });
+
+    const now = new Date();
+
+    // Vérifier une demande en attente existante entre les deux
+    const existingRequest = await db.collection("friendRequests").findOne({
+      $or: [
+        { senderId: currentUserId, recipientId: ownerId, status: "pending" },
+        { senderId: ownerId, recipientId: currentUserId, status: "pending" },
+      ],
+    });
+
+    if (existingRequest) {
+      await db.collection("friendRequests").updateOne(
+        { _id: existingRequest._id },
+        { $set: { status: "accepted", respondedAt: now } }
+      );
+    } else {
+      await db.collection("friendRequests").insertOne({
+        senderId: currentUserId,
+        senderName: currentUser.name,
+        recipientId: ownerId,
+        recipientEmail: owner.email,
+        status: "accepted",
+        createdAt: now,
+        respondedAt: now,
+      });
+    }
+
+    // Créer l'amitié bilatérale
+    await db.collection("friends").insertMany([
+      { userId: currentUserId, friendId: ownerId, name: owner.name, email: owner.email, phone: owner.phone || null, avatar: owner.avatar || null, createdAt: now },
+      { userId: ownerId, friendId: currentUserId, name: currentUser.name, email: currentUser.email, phone: currentUser.phone || null, avatar: currentUser.avatar || null, createdAt: now },
+    ]);
+
+    // Notifier le propriétaire du lien par email
+    if (transporter) {
+      transporter.sendMail({
+        from: process.env.MAIL_USER || "noreply@mytripcircle.com",
+        to: owner.email,
+        subject: `${currentUser.name} a rejoint vos amis sur MyTripCircle`,
+        html: `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+            <div style="background: linear-gradient(135deg, #2891FF 0%, #8869FF 100%); padding: 30px; text-align: center; border-radius: 10px 10px 0 0;">
+              <h1 style="color: white; margin: 0;">🌍 MyTripCircle</h1>
+            </div>
+            <div style="background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px;">
+              <h2 style="color: #333;">Nouvel ami !</h2>
+              <p style="color: #666; font-size: 16px;">
+                <strong>${currentUser.name}</strong> a accepté votre invitation et est maintenant votre ami sur MyTripCircle.
+              </p>
+              <div style="background: white; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #2891FF;">
+                <p style="color: #666; margin: 0;">Commencez à partager vos voyages ensemble !</p>
+              </div>
+            </div>
+          </div>
+        `,
+      }).catch((emailError) => {
+        console.error("Error sending friend invite notification:", emailError);
+      });
+    }
+
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─── Génération d'itinéraire IA (Gemini Flash) ───────────────────────────────
+app.post("/itinerary/generate", requireAuth, async (req, res) => {
+  try {
+    // Vérification de la clé API Groq
+    if (!process.env.GROQ_API_KEY) {
+      return res.status(503).json({ error: "ai_not_configured" });
+    }
+
+    const { city, days } = req.body;
+
+    // Validation des paramètres
+    if (!city || typeof city !== "string" || city.trim().length === 0 || city.trim().length > 100) {
+      return res.status(400).json({ error: "invalid_city" });
+    }
+    const daysInt = parseInt(days, 10);
+    if (!daysInt || daysInt < 1 || daysInt > 30) {
+      return res.status(400).json({ error: "invalid_days" });
+    }
+
+    const userId = req.user.id;
+    const cityNormalized = city.trim().toLowerCase();
+    const now = new Date();
+
+    // Vérification du rate limiting (3 générations max par 24h)
+    const since24h = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    const usageCount = await db.collection("itinerary_usage").countDocuments({
+      userId,
+      createdAt: { $gte: since24h },
+    });
+
+    if (usageCount >= 10) {
+      // Trouver la génération la plus ancienne dans la fenêtre pour calculer le reset
+      const oldest = await db.collection("itinerary_usage").findOne(
+        { userId, createdAt: { $gte: since24h } },
+        { sort: { createdAt: 1 } }
+      );
+      const resetAt = new Date(oldest.createdAt.getTime() + 24 * 60 * 60 * 1000);
+      const resetIn = Math.ceil((resetAt.getTime() - now.getTime()) / 1000);
+      return res.status(429).json({ error: "daily_limit_reached", limit: 3, resetIn });
+    }
+
+    // Vérification du cache (7 jours)
+    const since7days = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const cached = await db.collection("itinerary_cache").findOne({
+      city: cityNormalized,
+      days: daysInt,
+      createdAt: { $gte: since7days },
+    });
+
+    if (cached) {
+      return res.json({ cached: true, itinerary: cached.itinerary });
+    }
+
+    // Appel à l'API Groq (Llama 3.3 70B)
+    const prompt = `Génère un itinéraire de voyage pour la ville "${city.trim()}" sur ${daysInt} jour(s).
+Réponds UNIQUEMENT avec un objet JSON valide respectant EXACTEMENT cette structure :
+{
+  "city": "nom de la ville",
+  "days": [
+    {
+      "day": 1,
+      "title": "Titre du jour",
+      "morning": { "activity": "Description de l'activité du matin", "tip": "Conseil pratique" },
+      "afternoon": { "activity": "Description de l'activité de l'après-midi", "tip": "Conseil pratique" },
+      "evening": { "activity": "Description de l'activité du soir", "tip": "Conseil pratique" }
+    }
+  ]
+}
+Rédige en français. Ne mets rien avant ou après le JSON.`;
+
+    const groqRes = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${process.env.GROQ_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: "llama-3.3-70b-versatile",
+        messages: [{ role: "user", content: prompt }],
+        temperature: 0.7,
+        response_format: { type: "json_object" },
+      }),
+    });
+
+    const groqData = await groqRes.json();
+    const rawText = groqData?.choices?.[0]?.message?.content;
+
+    if (!rawText) {
+      return res.status(500).json({ error: "parse_error", debug: JSON.stringify(groqData).substring(0, 300) });
+    }
+
+    // Parse du JSON retourné par Gemini
+    let parsedData;
+    try {
+      // Extraire le premier bloc JSON valide (entre { et })
+      const jsonMatch = rawText.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) throw new Error("no JSON object found");
+      parsedData = JSON.parse(jsonMatch[0]);
+    } catch (parseErr) {
+      return res.status(500).json({ error: "parse_error", debug: rawText.substring(0, 300) });
+    }
+
+    // Sauvegarde en cache
+    await db.collection("itinerary_cache").insertOne({
+      city: cityNormalized,
+      days: daysInt,
+      itinerary: parsedData,
+      createdAt: new Date(),
+    });
+
+    // Enregistrement de l'usage
+    await db.collection("itinerary_usage").insertOne({
+      userId,
+      city: cityNormalized,
+      days: daysInt,
+      createdAt: new Date(),
+    });
+
+    return res.json({ cached: false, itinerary: parsedData });
+  } catch (e) {
+    console.error("[itinerary] Erreur:", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+connectMongo()
+  .then(() => {
+    // Log toutes les routes enregistrées pour debug
+    console.log("[server] Routes registered:");
+    console.log("  POST /bookings");
+    console.log("  GET /bookings");
+    console.log("  GET /bookings/trip/:tripId");
+
+    app.listen(PORT, ACTIVE_IP, () => {
+      console.log(`[server] API listening on http://${ACTIVE_IP}:${PORT}`);
+      console.log(`[server] Accessible via http://localhost:${PORT}`);
+      console.log(`[server] Use this IP in your app: ${ACTIVE_IP}`);
+    });
+  })
+  .catch((err) => {
+    console.error("[server] Mongo connection error:", err);
+    process.exit(1);
+  });
+
+// Garder le processus actif
+process.on("SIGINT", () => {
+  console.log("\n[server] Shutting down gracefully...");
+  process.exit(0);
+});
+
+process.on("uncaughtException", (err) => {
+  console.error("[server] Uncaught Exception:", err);
+});
+
+process.on("unhandledRejection", (reason, promise) => {
+  console.error("[server] Unhandled Rejection at:", promise, "reason:", reason);
+});

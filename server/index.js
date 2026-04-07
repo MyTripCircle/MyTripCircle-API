@@ -28,10 +28,11 @@ app.set("trust proxy", 1);
 
 // ─── Sécurité ─────────────────────────────────────────────────────────────────
 app.use(helmet());
+app.use(helmet.hsts({ maxAge: 31536000, includeSubDomains: true, preload: true }));
 
 const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(",").map((o) => o.trim())
-  : ["https://mytripcircle-api.enzo-turpin.fr"];
+  : [];
 
 app.use(cors({
   origin: ALLOWED_ORIGINS,
