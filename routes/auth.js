@@ -318,13 +318,13 @@ router.post("/forgot-password", authLimiter, async (req, res) => {
 router.get("/verify-reset-token", async (req, res) => {
   try {
     const db = getDb();
-    const { token } = req.query;
+    const { code } = req.query;
 
-    if (!token) return res.status(400).json({ success: false, error: "Token manquant" });
+    if (!code) return res.status(400).json({ success: false, error: "Code manquant" });
 
     const user = await db.collection("users").findOne({
-      resetToken: token,
-      resetTokenExpiresAt: { $gt: new Date() },
+      resetCode: code,
+      resetCodeExpiresAt: { $gt: new Date() },
     });
 
     if (!user) return res.status(400).json({ success: false, error: "Lien invalide ou déjà utilisé" });
@@ -338,10 +338,10 @@ router.get("/verify-reset-token", async (req, res) => {
 router.post("/reset-password", authLimiter, async (req, res) => {
   try {
     const db = getDb();
-    const { token, newPassword } = req.body;
+    const { code, newPassword } = req.body;
 
-    if (!token || !newPassword) {
-      return res.status(400).json({ success: false, error: "Token et nouveau mot de passe requis" });
+    if (!code || !newPassword) {
+      return res.status(400).json({ success: false, error: "Code et nouveau mot de passe requis" });
     }
 
     if (!isStrongPassword(newPassword)) {
@@ -349,18 +349,18 @@ router.post("/reset-password", authLimiter, async (req, res) => {
     }
 
     const user = await db.collection("users").findOne({
-      resetToken: token,
-      resetTokenExpiresAt: { $gt: new Date() },
+      resetCode: code,
+      resetCodeExpiresAt: { $gt: new Date() },
     });
 
-    if (!user) return res.status(400).json({ success: false, error: "Token invalide ou expiré" });
+    if (!user) return res.status(400).json({ success: false, error: "Code invalide ou expiré" });
 
     const passwordHash = await bcrypt.hash(newPassword, 10);
     await db.collection("users").updateOne(
       { _id: user._id },
       {
         $set: { password: passwordHash, updatedAt: new Date() },
-        $unset: { resetToken: "", resetTokenExpiresAt: "", passwordHash: "" },
+        $unset: { resetCode: "", resetCodeExpiresAt: "", passwordHash: "" },
       }
     );
 
@@ -497,7 +497,20 @@ router.get("/reset-password-page", async (req, res) => {
 
     if (!user) return res.status(400).send(errorPage("Ce lien est invalide ou a déjà été utilisé."));
 
-    const deepLink = `mytripcircle://reset-password?token=${token}`;
+    // Échange côté serveur : on consomme le token email et on génère un code
+    // court-vécu (10 min) transmis uniquement via le deep link vers l'app.
+    // Le token original est supprimé immédiatement pour qu'il ne soit plus
+    // réutilisable même s'il est capturé dans les logs ou l'historique navigateur.
+    const resetCode = crypto.randomBytes(16).toString("hex");
+    await db.collection("users").updateOne(
+      { _id: user._id },
+      {
+        $set: { resetCode, resetCodeExpiresAt: new Date(Date.now() + OTP_EXPIRY_MS) },
+        $unset: { resetToken: "", resetTokenExpiresAt: "" },
+      }
+    );
+
+    const deepLink = `mytripcircle://reset-password?code=${resetCode}`;
     return res.send(`<!DOCTYPE html>
 <html lang="fr">
 <head>

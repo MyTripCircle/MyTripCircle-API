@@ -18,7 +18,6 @@ const COLORS = {
   terra: "#C4714A",
   terraDark: "#A35830",
   terraLight: "#F5E5DC",
-  sand: "#F5F0E8",
   sandLight: "#FDFAF5",
   sandMid: "#EDE5D8",
   ink: "#2A2318",
@@ -28,7 +27,7 @@ const COLORS = {
   white: "#FFFFFF",
 };
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// ─── Composants HTML ──────────────────────────────────────────────────────────
 
 const EMAIL_HEADER = `
   <div style="background: linear-gradient(135deg, ${COLORS.terra} 0%, ${COLORS.terraDark} 100%); padding: 32px 30px; text-align: center; border-radius: 12px 12px 0 0;">
@@ -55,6 +54,32 @@ function wrap(content) {
   `;
 }
 
+function heading(text) {
+  return `<h2 style="color: ${COLORS.ink}; margin: 0 0 8px; font-family: Georgia, 'Times New Roman', serif;">${text}</h2>`;
+}
+
+function infoCard(content, accentColor = COLORS.moss) {
+  return `<div style="background: ${COLORS.white}; padding: 20px; border-radius: 10px; margin: 16px 0 20px; border: 1px solid ${COLORS.sandMid}; border-left: 4px solid ${accentColor};">${content}</div>`;
+}
+
+function ctaButton(text, link) {
+  return `<div style="text-align: center; margin: 0 0 20px;"><a href="${link}" style="background: ${COLORS.terra}; color: ${COLORS.white}; padding: 14px 32px; text-decoration: none; border-radius: 10px; font-weight: 600; display: inline-block; font-size: 15px;">${text}</a></div>`;
+}
+
+function caption(text) {
+  return `<p style="color: ${COLORS.inkLight}; font-size: 13px; text-align: center; margin: 0;">${text}</p>`;
+}
+
+function cardLine(text, { size = 15, marginBottom = 0 } = {}) {
+  return `<p style="color: ${COLORS.inkMid}; font-size: ${size}px; margin: 0 0 ${marginBottom}px;">${text}</p>`;
+}
+
+function bold(text) {
+  return `<strong style="color: ${COLORS.ink};">${text}</strong>`;
+}
+
+// ─── Transport ────────────────────────────────────────────────────────────────
+
 async function _send(to, subject, html, text) {
   if (!transporter) {
     return { success: true, logged: true };
@@ -78,7 +103,7 @@ async function _send(to, subject, html, text) {
 
 async function sendOtpEmail(to, otp) {
   const html = wrap(`
-    <h2 style="color: ${COLORS.ink}; margin: 0 0 8px; font-family: Georgia, 'Times New Roman', serif;">Votre code de vérification</h2>
+    ${heading("Votre code de vérification")}
     <p style="color: ${COLORS.inkMid}; font-size: 15px; margin: 0 0 20px;">Utilisez le code suivant pour vérifier votre compte :</p>
     <div style="background: ${COLORS.white}; padding: 24px; text-align: center; border-radius: 10px; margin: 0 0 20px; border: 1px solid ${COLORS.sandMid};">
       <span style="font-size: 36px; font-weight: bold; letter-spacing: 8px; color: ${COLORS.terra}; font-family: 'Courier New', monospace;">${otp}</span>
@@ -92,11 +117,9 @@ async function sendOtpEmail(to, otp) {
 async function sendPasswordResetEmail(to, resetToken) {
   const resetLink = `${API_BASE_URL}/reset-password?token=${resetToken}`;
   const html = wrap(`
-    <h2 style="color: ${COLORS.ink}; margin: 0 0 8px; font-family: Georgia, 'Times New Roman', serif;">Réinitialisation du mot de passe</h2>
+    ${heading("Réinitialisation du mot de passe")}
     <p style="color: ${COLORS.inkMid}; font-size: 15px; margin: 0 0 24px;">Cliquez sur le bouton ci-dessous pour réinitialiser votre mot de passe :</p>
-    <div style="text-align: center; margin: 0 0 24px;">
-      <a href="${resetLink}" style="background: ${COLORS.terra}; color: ${COLORS.white}; padding: 14px 32px; text-decoration: none; border-radius: 10px; display: inline-block; font-weight: 600; font-size: 15px;">Réinitialiser le mot de passe</a>
-    </div>
+    ${ctaButton("Réinitialiser le mot de passe", resetLink)}
     <p style="color: ${COLORS.inkMid}; font-size: 13px; margin: 0 0 8px;">Ou copiez ce lien :</p>
     <p style="background: ${COLORS.white}; padding: 12px; border-radius: 8px; word-break: break-all; font-size: 12px; color: ${COLORS.inkMid}; border: 1px solid ${COLORS.sandMid}; margin: 0 0 20px;">${resetLink}</p>
     <p style="color: ${COLORS.inkLight}; font-size: 13px; margin: 0 0 4px;">⏱ Ce lien expire dans <strong>1 heure</strong>.</p>
@@ -108,44 +131,47 @@ async function sendPasswordResetEmail(to, resetToken) {
 
 async function sendFriendRequestEmail(to, senderName, lang = "fr") {
   const isFr = lang !== "en";
-  const subject = isFr
-    ? "Nouvelle demande d'ami sur MyTripCircle"
-    : "New friend request on MyTripCircle";
+  const t = isFr
+    ? {
+        subject: "Nouvelle demande d'ami sur MyTripCircle",
+        title: "Nouvelle demande d'ami !",
+        body: `👋 ${bold(senderName)} souhaite vous ajouter en ami sur MyTripCircle.`,
+        footer: "Ouvrez l'application MyTripCircle pour répondre.",
+      }
+    : {
+        subject: "New friend request on MyTripCircle",
+        title: "New friend request!",
+        body: `👋 ${bold(senderName)} wants to add you as a friend on MyTripCircle.`,
+        footer: "Open the MyTripCircle app to respond.",
+      };
   const html = wrap(
-    isFr
-      ? `<h2 style="color: ${COLORS.ink}; margin: 0 0 8px; font-family: Georgia, 'Times New Roman', serif;">Nouvelle demande d'ami !</h2>
-         <div style="background: ${COLORS.white}; padding: 20px; border-radius: 10px; margin: 16px 0 20px; border-left: 4px solid ${COLORS.moss}; border: 1px solid ${COLORS.sandMid}; border-left: 4px solid ${COLORS.moss};">
-           <p style="color: ${COLORS.inkMid}; font-size: 15px; margin: 0;">👋 <strong style="color: ${COLORS.ink};">${senderName}</strong> souhaite vous ajouter en ami sur MyTripCircle.</p>
-         </div>
-         <p style="color: ${COLORS.inkLight}; font-size: 13px; text-align: center; margin: 0;">Ouvrez l'application MyTripCircle pour répondre.</p>`
-      : `<h2 style="color: ${COLORS.ink}; margin: 0 0 8px; font-family: Georgia, 'Times New Roman', serif;">New friend request!</h2>
-         <div style="background: ${COLORS.white}; padding: 20px; border-radius: 10px; margin: 16px 0 20px; border: 1px solid ${COLORS.sandMid}; border-left: 4px solid ${COLORS.moss};">
-           <p style="color: ${COLORS.inkMid}; font-size: 15px; margin: 0;">👋 <strong style="color: ${COLORS.ink};">${senderName}</strong> wants to add you as a friend on MyTripCircle.</p>
-         </div>
-         <p style="color: ${COLORS.inkLight}; font-size: 13px; text-align: center; margin: 0;">Open the MyTripCircle app to respond.</p>`
+    heading(t.title) +
+    infoCard(cardLine(t.body)) +
+    caption(t.footer)
   );
-  return _send(to, subject, html);
+  return _send(to, t.subject, html);
 }
 
 async function sendFriendRequestFoundEmail(to, newUserName, lang = "fr") {
   const isFr = lang !== "en";
-  const subject = isFr
-    ? "Votre demande d'ami a été trouvée !"
-    : "Your friend request has been found!";
+  const t = isFr
+    ? {
+        subject: "Votre demande d'ami a été trouvée !",
+        title: "Bonne nouvelle !",
+        line1: `🎉 ${bold(newUserName)} vient de s'inscrire sur MyTripCircle.`,
+        line2: "La demande d'ami que vous avez envoyée est maintenant visible dans leur application !",
+      }
+    : {
+        subject: "Your friend request has been found!",
+        title: "Great news!",
+        line1: `🎉 ${bold(newUserName)} just signed up on MyTripCircle.`,
+        line2: "The friend request you sent is now visible in their app!",
+      };
   const html = wrap(
-    isFr
-      ? `<h2 style="color: ${COLORS.ink}; margin: 0 0 8px; font-family: Georgia, 'Times New Roman', serif;">Bonne nouvelle !</h2>
-         <div style="background: ${COLORS.white}; padding: 20px; border-radius: 10px; margin: 16px 0 20px; border: 1px solid ${COLORS.sandMid}; border-left: 4px solid ${COLORS.moss};">
-           <p style="color: ${COLORS.inkMid}; font-size: 15px; margin: 0 0 8px;">🎉 <strong style="color: ${COLORS.ink};">${newUserName}</strong> vient de s'inscrire sur MyTripCircle.</p>
-           <p style="color: ${COLORS.inkMid}; font-size: 14px; margin: 0;">La demande d'ami que vous avez envoyée est maintenant visible dans leur application !</p>
-         </div>`
-      : `<h2 style="color: ${COLORS.ink}; margin: 0 0 8px; font-family: Georgia, 'Times New Roman', serif;">Great news!</h2>
-         <div style="background: ${COLORS.white}; padding: 20px; border-radius: 10px; margin: 16px 0 20px; border: 1px solid ${COLORS.sandMid}; border-left: 4px solid ${COLORS.moss};">
-           <p style="color: ${COLORS.inkMid}; font-size: 15px; margin: 0 0 8px;">🎉 <strong style="color: ${COLORS.ink};">${newUserName}</strong> just signed up on MyTripCircle.</p>
-           <p style="color: ${COLORS.inkMid}; font-size: 14px; margin: 0;">The friend request you sent is now visible in their app!</p>
-         </div>`
+    heading(t.title) +
+    infoCard(cardLine(t.line1, { size: 15, marginBottom: 8 }) + cardLine(t.line2, { size: 14 }))
   );
-  return _send(to, subject, html);
+  return _send(to, t.subject, html);
 }
 
 async function sendTripInvitationEmail(
@@ -156,55 +182,55 @@ async function sendTripInvitationEmail(
   const locale = lang === "en" ? "en-US" : "fr-FR";
   const startFmt = new Date(tripStartDate).toLocaleDateString(locale);
   const endFmt = new Date(tripEndDate).toLocaleDateString(locale);
+
   const msgBlock = message
     ? `<div style="background: ${COLORS.terraLight}; padding: 16px; border-radius: 8px; margin: 0 0 20px;">
          <p style="color: ${COLORS.inkMid}; font-style: italic; margin: 0; font-size: 14px;">"${message}"</p>
        </div>`
     : "";
-  const tripCard = `
-    <div style="background: ${COLORS.white}; padding: 20px; border-radius: 10px; margin: 16px 0 20px; border: 1px solid ${COLORS.sandMid}; border-left: 4px solid ${COLORS.terra};">
-      <h3 style="color: ${COLORS.terra}; margin: 0 0 12px 0; font-family: Georgia, 'Times New Roman', serif; font-size: 18px;">${tripTitle}</h3>
-      <p style="color: ${COLORS.inkMid}; margin: 0 0 6px; font-size: 14px;">📍 ${tripDestination}</p>
-      <p style="color: ${COLORS.inkMid}; margin: 0; font-size: 14px;">📅 ${startFmt} → ${endFmt}</p>
-    </div>
-  `;
-  const isFr = lang !== "en";
-  const subject = isFr
-    ? "Invitation à rejoindre un voyage sur MyTripCircle"
-    : "You've been invited to join a trip on MyTripCircle";
-  const html = wrap(
-    isFr
-      ? `<h2 style="color: ${COLORS.ink}; margin: 0 0 8px; font-family: Georgia, 'Times New Roman', serif;">Vous avez été invité à un voyage !</h2>
-         <p style="color: ${COLORS.inkMid}; font-size: 15px; margin: 0 0 4px;"><strong style="color: ${COLORS.ink};">${inviterName}</strong> vous a invité à rejoindre le voyage :</p>
-         ${tripCard}${msgBlock}
-         <div style="text-align: center; margin: 0 0 20px;">
-           <a href="${invitationLink}" style="background: ${COLORS.terra}; color: ${COLORS.white}; padding: 14px 32px; text-decoration: none; border-radius: 10px; font-weight: 600; display: inline-block; font-size: 15px;">Accepter l'invitation</a>
-         </div>
-         <p style="color: ${COLORS.inkLight}; font-size: 12px; text-align: center; margin: 0;">⏱ Cette invitation expire dans 7 jours.</p>`
-      : `<h2 style="color: ${COLORS.ink}; margin: 0 0 8px; font-family: Georgia, 'Times New Roman', serif;">You've been invited to a trip!</h2>
-         <p style="color: ${COLORS.inkMid}; font-size: 15px; margin: 0 0 4px;"><strong style="color: ${COLORS.ink};">${inviterName}</strong> has invited you to join:</p>
-         ${tripCard}${msgBlock}
-         <div style="text-align: center; margin: 0 0 20px;">
-           <a href="${invitationLink}" style="background: ${COLORS.terra}; color: ${COLORS.white}; padding: 14px 32px; text-decoration: none; border-radius: 10px; font-weight: 600; display: inline-block; font-size: 15px;">Accept the invitation</a>
-         </div>
-         <p style="color: ${COLORS.inkLight}; font-size: 12px; text-align: center; margin: 0;">⏱ This invitation expires in 7 days.</p>`
+
+  const tripCard = infoCard(
+    `<h3 style="color: ${COLORS.terra}; margin: 0 0 12px 0; font-family: Georgia, 'Times New Roman', serif; font-size: 18px;">${tripTitle}</h3>` +
+    cardLine(`📍 ${tripDestination}`, { size: 14, marginBottom: 6 }) +
+    cardLine(`📅 ${startFmt} → ${endFmt}`, { size: 14 }),
+    COLORS.terra
   );
-  return _send(to, subject, html);
+
+  const isFr = lang !== "en";
+  const t = isFr
+    ? {
+        subject: "Invitation à rejoindre un voyage sur MyTripCircle",
+        title: "Vous avez été invité à un voyage !",
+        intro: `${bold(inviterName)} vous a invité à rejoindre le voyage :`,
+        cta: "Accepter l'invitation",
+        expiry: "⏱ Cette invitation expire dans 7 jours.",
+      }
+    : {
+        subject: "You've been invited to join a trip on MyTripCircle",
+        title: "You've been invited to a trip!",
+        intro: `${bold(inviterName)} has invited you to join:`,
+        cta: "Accept the invitation",
+        expiry: "⏱ This invitation expires in 7 days.",
+      };
+
+  const html = wrap(
+    heading(t.title) +
+    `<p style="color: ${COLORS.inkMid}; font-size: 15px; margin: 0 0 4px;">${t.intro}</p>` +
+    tripCard +
+    msgBlock +
+    ctaButton(t.cta, invitationLink) +
+    caption(t.expiry)
+  );
+  return _send(to, t.subject, html);
 }
 
 async function sendFriendJoinedEmail(to, newFriendName) {
-  const html = wrap(`
-    <h2 style="color: ${COLORS.ink}; margin: 0 0 8px; font-family: Georgia, 'Times New Roman', serif;">Nouvel ami !</h2>
-    <p style="color: ${COLORS.inkMid}; font-size: 15px; margin: 0 0 16px;"><strong style="color: ${COLORS.ink};">${newFriendName}</strong> a accepté votre invitation et est maintenant votre ami sur MyTripCircle.</p>
-    <div style="background: ${COLORS.white}; padding: 20px; border-radius: 10px; margin: 0 0 20px; border: 1px solid ${COLORS.sandMid}; border-left: 4px solid ${COLORS.moss};">
-      <p style="color: ${COLORS.inkMid}; margin: 0; font-size: 14px;">🌍 Commencez à partager vos voyages ensemble !</p>
-    </div>
-  `);
-  return _send(
-    to,
-    `${newFriendName} a rejoint vos amis sur MyTripCircle`,
-    html
+  const html = wrap(
+    heading("Nouvel ami !") +
+    `<p style="color: ${COLORS.inkMid}; font-size: 15px; margin: 0 0 16px;">${bold(newFriendName)} a accepté votre invitation et est maintenant votre ami sur MyTripCircle.</p>` +
+    infoCard(cardLine("🌍 Commencez à partager vos voyages ensemble !", { size: 14 }))
   );
+  return _send(to, `${newFriendName} a rejoint vos amis sur MyTripCircle`, html);
 }
 
 module.exports = {
