@@ -7,6 +7,44 @@ const { sendFriendRequestEmail } = require("../utils/email");
 
 const router = express.Router();
 
+async function checkRegisteredRecipient(db, senderId, sender, recipientUser) {
+  const recipientId = String(recipientUser._id);
+
+  const existingFriendship = await db.collection("friends").findOne({
+    $or: [{ userId: senderId, friendId: recipientId }, { userId: recipientId, friendId: senderId }],
+  });
+  if (existingFriendship) return { error: "Déjà amis", status: 400 };
+
+  const incomingRequest = await db.collection("friendRequests").findOne({
+    senderId: recipientId, recipientId: senderId, status: "pending",
+  });
+  if (incomingRequest) {
+    const now = new Date();
+    await db.collection("friendRequests").updateOne(
+      { _id: incomingRequest._id },
+      { $set: { status: "accepted", respondedAt: now } }
+    );
+    await db.collection("friends").insertMany([
+      { userId: senderId, friendId: recipientId, name: recipientUser.name, email: recipientUser.email, phone: recipientUser.phone, createdAt: now },
+      { userId: recipientId, friendId: senderId, name: sender?.name || "Quelqu'un", email: sender?.email, phone: sender?.phone, createdAt: now },
+    ]);
+    return { autoAccepted: true };
+  }
+
+  const existingRequest = await db.collection("friendRequests").findOne({ senderId, recipientId, status: "pending" });
+  if (existingRequest) return { error: "Demande déjà en attente", status: 400 };
+
+  return { ok: true };
+}
+
+async function checkUnregisteredDuplicate(db, senderId, recipientEmail, recipientPhone) {
+  const query = { senderId, recipientId: null, status: "pending" };
+  if (recipientEmail) query.recipientEmail = recipientEmail;
+  if (recipientPhone) query.recipientPhone = recipientPhone;
+  const existingRequest = await db.collection("friendRequests").findOne(query);
+  return existingRequest ? "Demande déjà en attente" : null;
+}
+
 // POST /friends/request
 router.post("/request", requireAuth, async (req, res) => {
   try {
@@ -29,55 +67,21 @@ router.post("/request", requireAuth, async (req, res) => {
     }
 
     let recipientUser = null;
-    if (recipientIdParam) {
-      recipientUser = await db.collection("users").findOne({ _id: new ObjectId(recipientIdParam) });
-    }
-    if (!recipientUser && recipientEmail) {
-      recipientUser = await db.collection("users").findOne({ email: recipientEmail });
-    }
-    if (!recipientUser && recipientPhone) {
-      recipientUser = await db.collection("users").findOne({ phone: recipientPhone });
-    }
+    if (recipientIdParam) recipientUser = await db.collection("users").findOne({ _id: new ObjectId(recipientIdParam) });
+    if (!recipientUser && recipientEmail) recipientUser = await db.collection("users").findOne({ email: recipientEmail });
+    if (!recipientUser && recipientPhone) recipientUser = await db.collection("users").findOne({ phone: recipientPhone });
 
     if (recipientUser && String(recipientUser._id) === senderId) {
       return res.status(400).json({ error: "Impossible de s'envoyer une demande à soi-même" });
     }
 
     if (recipientUser) {
-      const recipientId = String(recipientUser._id);
-
-      const existingFriendship = await db.collection("friends").findOne({
-        $or: [{ userId: senderId, friendId: recipientId }, { userId: recipientId, friendId: senderId }],
-      });
-      if (existingFriendship) return res.status(400).json({ error: "Déjà amis" });
-
-      const incomingRequest = await db.collection("friendRequests").findOne({
-        senderId: recipientId, recipientId: senderId, status: "pending",
-      });
-      if (incomingRequest) {
-        const now = new Date();
-        await db.collection("friendRequests").updateOne(
-          { _id: incomingRequest._id },
-          { $set: { status: "accepted", respondedAt: now } }
-        );
-        await db.collection("friends").insertMany([
-          { userId: senderId, friendId: recipientId, name: recipientUser.name, email: recipientUser.email, phone: recipientUser.phone, createdAt: now },
-          { userId: recipientId, friendId: senderId, name: sender?.name || "Quelqu'un", email: sender?.email, phone: sender?.phone, createdAt: now },
-        ]);
-        return res.json({ success: true, autoAccepted: true });
-      }
-
-      const existingRequest = await db.collection("friendRequests").findOne({
-        senderId, recipientId, status: "pending",
-      });
-      if (existingRequest) return res.status(400).json({ error: "Demande déjà en attente" });
+      const check = await checkRegisteredRecipient(db, senderId, sender, recipientUser);
+      if (check.error) return res.status(check.status).json({ error: check.error });
+      if (check.autoAccepted) return res.json({ success: true, autoAccepted: true });
     } else {
-      const existingRequestQuery = { senderId, recipientId: null, status: "pending" };
-      if (recipientEmail) existingRequestQuery.recipientEmail = recipientEmail;
-      if (recipientPhone) existingRequestQuery.recipientPhone = recipientPhone;
-
-      const existingRequest = await db.collection("friendRequests").findOne(existingRequestQuery);
-      if (existingRequest) return res.status(400).json({ error: "Demande déjà en attente" });
+      const dupError = await checkUnregisteredDuplicate(db, senderId, recipientEmail, recipientPhone);
+      if (dupError) return res.status(400).json({ error: dupError });
     }
 
     const friendRequest = {
@@ -94,11 +98,7 @@ router.post("/request", requireAuth, async (req, res) => {
     friendRequest._id = result.insertedId;
 
     if (recipientUser) {
-      await sendFriendRequestEmail(
-        recipientUser.email,
-        sender?.name || "Quelqu'un",
-        recipientUser.language || "fr"
-      );
+      await sendFriendRequestEmail(recipientUser.email, sender?.name || "Quelqu'un", recipientUser.language || "fr");
     }
 
     return res.json(friendRequest);

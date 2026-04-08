@@ -10,6 +10,13 @@ const { isValidEmail, isValidPhone } = require("../utils/validators");
 
 const router = express.Router();
 
+function determineRelation(alreadyFriend, pendingSent, pendingReceived) {
+  if (alreadyFriend) return "friend";
+  if (pendingSent) return "pending_sent";
+  if (pendingReceived) return "pending_received";
+  return "none";
+}
+
 // PUT /users/me
 router.put("/me", requireAuth, async (req, res) => {
   try {
@@ -277,12 +284,7 @@ router.get("/lookup", requireAuth, async (req, res) => {
       email: found.email,
       avatar: found.avatar || null,
       stats: { totalTrips, countries, commonFriends },
-      relation: (() => {
-        if (alreadyFriend) return "friend";
-        if (pendingSent) return "pending_sent";
-        if (pendingReceived) return "pending_received";
-        return "none";
-      })(),
+      relation: determineRelation(alreadyFriend, pendingSent, pendingReceived),
     });
   } catch (e) {
 

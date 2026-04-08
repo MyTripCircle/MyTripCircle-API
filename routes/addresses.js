@@ -7,6 +7,40 @@ const { requireAuth } = require("../middleware/auth");
 const router = express.Router();
 
 const trim = (v) => (typeof v === "string" ? v.trim() : v);
+const VALID_TYPES = ["hotel", "restaurant", "activity", "transport", "other"];
+
+function isValidHttpUrl(url) {
+  try {
+    const u = new URL(url);
+    return ["http:", "https:"].includes(u.protocol);
+  } catch {
+    return false;
+  }
+}
+
+function validateAddressCreate({ type, name, address, city, country, rating, website, photoUrl }) {
+  if (!type || !VALID_TYPES.includes(type)) return `Type invalide. Valeurs acceptées : ${VALID_TYPES.join(", ")}`;
+  if (!name || typeof name !== "string" || name.trim().length === 0 || name.trim().length > 200) return "Nom requis (1-200 caractères)";
+  if (!address || typeof address !== "string" || address.trim().length === 0 || address.trim().length > 500) return "Adresse requise (1-500 caractères)";
+  if (!city || typeof city !== "string" || city.trim().length === 0 || city.trim().length > 100) return "Ville requise (1-100 caractères)";
+  if (!country || typeof country !== "string" || country.trim().length === 0 || country.trim().length > 100) return "Pays requis (1-100 caractères)";
+  if (rating !== undefined && (typeof rating !== "number" || rating < 0 || rating > 5)) return "Note invalide (0-5)";
+  if (website && !isValidHttpUrl(website)) return "URL du site invalide";
+  if (photoUrl && !isValidHttpUrl(photoUrl)) return "URL de la photo invalide";
+  return null;
+}
+
+function validateAddressUpdate({ type, name, address, city, country, rating, website, photoUrl }) {
+  if (type !== undefined && !VALID_TYPES.includes(type)) return `Type invalide. Valeurs acceptées : ${VALID_TYPES.join(", ")}`;
+  if (name !== undefined && (typeof name !== "string" || name.trim().length === 0 || name.trim().length > 200)) return "Nom invalide (1-200 caractères)";
+  if (address !== undefined && (typeof address !== "string" || address.trim().length === 0 || address.trim().length > 500)) return "Adresse invalide (1-500 caractères)";
+  if (city !== undefined && (typeof city !== "string" || city.trim().length === 0 || city.trim().length > 100)) return "Ville invalide (1-100 caractères)";
+  if (country !== undefined && (typeof country !== "string" || country.trim().length === 0 || country.trim().length > 100)) return "Pays invalide (1-100 caractères)";
+  if (rating !== undefined && rating !== null && (typeof rating !== "number" || rating < 0 || rating > 5)) return "Note invalide (0-5)";
+  if (website && !isValidHttpUrl(website)) return "URL du site invalide";
+  if (photoUrl && !isValidHttpUrl(photoUrl)) return "URL de la photo invalide";
+  return null;
+}
 
 // GET /addresses
 router.get("/", requireAuth, async (req, res) => {
@@ -98,33 +132,8 @@ router.post("/", requireAuth, async (req, res) => {
     const userId = String(req.user._id);
     const { type, name, address, city, country, phone, website, notes, rating, tripId, photoUrl } = req.body;
 
-    const VALID_TYPES = ["hotel", "restaurant", "activity", "transport", "other"];
-    if (!type || !VALID_TYPES.includes(type)) {
-      return res.status(400).json({ error: `Type invalide. Valeurs acceptées : ${VALID_TYPES.join(", ")}` });
-    }
-    if (!name || typeof name !== "string" || name.trim().length === 0 || name.trim().length > 200) {
-      return res.status(400).json({ error: "Nom requis (1-200 caractères)" });
-    }
-    if (!address || typeof address !== "string" || address.trim().length === 0 || address.trim().length > 500) {
-      return res.status(400).json({ error: "Adresse requise (1-500 caractères)" });
-    }
-    if (!city || typeof city !== "string" || city.trim().length === 0 || city.trim().length > 100) {
-      return res.status(400).json({ error: "Ville requise (1-100 caractères)" });
-    }
-    if (!country || typeof country !== "string" || country.trim().length === 0 || country.trim().length > 100) {
-      return res.status(400).json({ error: "Pays requis (1-100 caractères)" });
-    }
-    if (rating !== undefined && (typeof rating !== "number" || rating < 0 || rating > 5)) {
-      return res.status(400).json({ error: "Note invalide (0-5)" });
-    }
-    if (website) {
-      try { const u = new URL(website); if (!["http:", "https:"].includes(u.protocol)) throw new Error("Protocole non autorisé"); }
-      catch { return res.status(400).json({ error: "URL du site invalide" }); }
-    }
-    if (photoUrl) {
-      try { const u = new URL(photoUrl); if (!["http:", "https:"].includes(u.protocol)) throw new Error("Protocole non autorisé"); }
-      catch { return res.status(400).json({ error: "URL de la photo invalide" }); }
-    }
+    const validationError = validateAddressCreate(req.body);
+    if (validationError) return res.status(400).json({ error: validationError });
 
     const doc = {
       type,
@@ -175,33 +184,8 @@ router.put("/:id", requireAuth, async (req, res) => {
 
     const { type, name, address, city, country, phone, website, notes, rating, photoUrl } = req.body;
 
-    const VALID_TYPES = ["hotel", "restaurant", "activity", "transport", "other"];
-    if (type !== undefined && !VALID_TYPES.includes(type)) {
-      return res.status(400).json({ error: `Type invalide. Valeurs acceptées : ${VALID_TYPES.join(", ")}` });
-    }
-    if (name !== undefined && (typeof name !== "string" || name.trim().length === 0 || name.trim().length > 200)) {
-      return res.status(400).json({ error: "Nom invalide (1-200 caractères)" });
-    }
-    if (address !== undefined && (typeof address !== "string" || address.trim().length === 0 || address.trim().length > 500)) {
-      return res.status(400).json({ error: "Adresse invalide (1-500 caractères)" });
-    }
-    if (city !== undefined && (typeof city !== "string" || city.trim().length === 0 || city.trim().length > 100)) {
-      return res.status(400).json({ error: "Ville invalide (1-100 caractères)" });
-    }
-    if (country !== undefined && (typeof country !== "string" || country.trim().length === 0 || country.trim().length > 100)) {
-      return res.status(400).json({ error: "Pays invalide (1-100 caractères)" });
-    }
-    if (rating !== undefined && rating !== null && (typeof rating !== "number" || rating < 0 || rating > 5)) {
-      return res.status(400).json({ error: "Note invalide (0-5)" });
-    }
-    if (website) {
-      try { const u = new URL(website); if (!["http:", "https:"].includes(u.protocol)) throw new Error("Protocole non autorisé"); }
-      catch { return res.status(400).json({ error: "URL du site invalide" }); }
-    }
-    if (photoUrl) {
-      try { const u = new URL(photoUrl); if (!["http:", "https:"].includes(u.protocol)) throw new Error("Protocole non autorisé"); }
-      catch { return res.status(400).json({ error: "URL de la photo invalide" }); }
-    }
+    const updateError = validateAddressUpdate(req.body);
+    if (updateError) return res.status(400).json({ error: updateError });
 
     const setData = { updatedAt: new Date() };
     const unsetData = {};
