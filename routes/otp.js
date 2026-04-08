@@ -1,6 +1,7 @@
 const express = require("express");
 const bcrypt = require("bcrypt");
-const crypto = require("crypto");
+const crypto = require("node:crypto");
+const logger = require("../utils/logger");
 const { getDb } = require("../db");
 const { authLimiter } = require("../middleware/rateLimiter");
 const { sendPasswordResetEmail } = require("../utils/email");
@@ -60,6 +61,9 @@ router.post("/forgot-password", authLimiter, async (req, res) => {
     await sendPasswordResetEmail(email, resetToken);
     return res.json({ success: true, message: "Si un compte existe, un lien a été envoyé" });
   } catch (e) {
+
+    logger.error("[otp]", e.message);
+
     return res.status(500).json({ success: false, error: "Erreur interne du serveur" });
   }
 });
@@ -80,6 +84,9 @@ router.get("/verify-reset-token", async (req, res) => {
     if (!user) return res.status(400).json({ success: false, error: "Lien invalide ou déjà utilisé" });
     return res.json({ success: true });
   } catch (e) {
+
+    logger.error("[otp]", e.message);
+
     return res.status(500).json({ success: false, error: "Erreur interne du serveur" });
   }
 });
@@ -118,6 +125,9 @@ router.post("/reset-password", authLimiter, async (req, res) => {
     const refreshToken = await createRefreshToken(db, user._id);
     return res.json({ success: true, token: accessToken, refreshToken, user: sanitizeUser(user) });
   } catch (e) {
+
+    logger.error("[otp]", e.message);
+
     return res.status(500).json({ success: false, error: "Erreur interne du serveur" });
   }
 });
@@ -167,6 +177,9 @@ router.get("/reset-password-page", async (req, res) => {
 </body>
 </html>`);
   } catch (e) {
+
+    logger.error("[otp]", e.message);
+
     return res.status(500).send(errorPage("Une erreur est survenue. Réessayez."));
   }
 });

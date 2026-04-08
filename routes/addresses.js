@@ -1,4 +1,5 @@
 const express = require("express");
+const logger = require("../utils/logger");
 const { ObjectId } = require("mongodb");
 const { getDb } = require("../db");
 const { requireAuth } = require("../middleware/auth");
@@ -24,6 +25,9 @@ router.get("/", requireAuth, async (req, res) => {
 
     return res.json(items);
   } catch (e) {
+
+    logger.error("[addresses]", e.message);
+
     return res.status(500).json({ error: "Erreur interne du serveur" });
   }
 });
@@ -54,6 +58,9 @@ router.get("/trip/:tripId", requireAuth, async (req, res) => {
     const items = await db.collection("addresses").find({ tripId }).toArray();
     return res.json(items);
   } catch (e) {
+
+    logger.error("[addresses]", e.message);
+
     return res.status(500).json({ error: "Erreur interne du serveur" });
   }
 });
@@ -77,6 +84,9 @@ router.get("/:id", requireAuth, async (req, res) => {
 
     return res.json(item);
   } catch (e) {
+
+    logger.error("[addresses]", e.message);
+
     return res.status(500).json({ error: "Erreur interne du serveur" });
   }
 });
@@ -137,6 +147,9 @@ router.post("/", requireAuth, async (req, res) => {
     doc._id = result.insertedId;
     return res.status(201).json(doc);
   } catch (e) {
+
+    logger.error("[addresses]", e.message);
+
     return res.status(500).json({ error: "Erreur interne du serveur" });
   }
 });
@@ -219,6 +232,9 @@ router.put("/:id", requireAuth, async (req, res) => {
     const updated = await db.collection("addresses").findOne({ _id: new ObjectId(id) });
     return res.json(updated);
   } catch (e) {
+
+    logger.error("[addresses]", e.message);
+
     return res.status(500).json({ error: "Erreur interne du serveur" });
   }
 });
@@ -245,6 +261,9 @@ router.delete("/:id", requireAuth, async (req, res) => {
     await db.collection("addresses").deleteOne({ _id: new ObjectId(id) });
     return res.json({ success: true });
   } catch (e) {
+
+    logger.error("[addresses]", e.message);
+
     return res.status(500).json({ error: "Erreur interne du serveur" });
   }
 });

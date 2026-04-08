@@ -1,4 +1,5 @@
 const express = require("express");
+const logger = require("../utils/logger");
 const { ObjectId } = require("mongodb");
 const { getDb } = require("../db");
 const { requireAuth } = require("../middleware/auth");
@@ -45,7 +46,7 @@ router.post("/", requireAuth, async (req, res) => {
       time: time || undefined,
       address: address ? address.trim() : undefined,
       confirmationNumber: confirmationNumber ? confirmationNumber.trim() : undefined,
-      price: price ? parseFloat(price) : undefined,
+      price: price ? Number.parseFloat(price) : undefined,
       currency: currency || "EUR",
       status: status || "pending",
       attachments: attachments || [],
@@ -59,6 +60,9 @@ router.post("/", requireAuth, async (req, res) => {
 
     return res.status(201).json(booking);
   } catch (e) {
+
+    logger.error("[bookings]", e.message);
+
     return res.status(500).json({ error: "Erreur interne du serveur" });
   }
 });
@@ -84,6 +88,9 @@ router.get("/", requireAuth, async (req, res) => {
 
     return res.json(items);
   } catch (e) {
+
+    logger.error("[bookings]", e.message);
+
     return res.status(500).json({ error: "Erreur interne du serveur" });
   }
 });
@@ -101,6 +108,9 @@ router.get("/trip/:tripId", requireAuth, async (req, res) => {
     const items = await db.collection("bookings").find({ tripId }).toArray();
     return res.json(items);
   } catch (e) {
+
+    logger.error("[bookings]", e.message);
+
     return res.status(500).json({ error: "Erreur interne du serveur" });
   }
 });
@@ -122,6 +132,9 @@ router.get("/:id", requireAuth, async (req, res) => {
 
     return res.json(booking);
   } catch (e) {
+
+    logger.error("[bookings]", e.message);
+
     return res.status(500).json({ error: "Erreur interne du serveur" });
   }
 });
@@ -160,6 +173,9 @@ router.put("/:id", requireAuth, async (req, res) => {
     const updated = await db.collection("bookings").findOne({ _id: new ObjectId(id) });
     return res.json(updated);
   } catch (e) {
+
+    logger.error("[bookings]", e.message);
+
     return res.status(500).json({ error: "Erreur interne du serveur" });
   }
 });
@@ -191,6 +207,9 @@ router.delete("/:id", requireAuth, async (req, res) => {
     await db.collection("bookings").deleteOne({ _id: new ObjectId(id) });
     return res.json({ success: true });
   } catch (e) {
+
+    logger.error("[bookings]", e.message);
+
     return res.status(500).json({ error: "Erreur interne du serveur" });
   }
 });

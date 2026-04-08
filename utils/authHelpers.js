@@ -1,6 +1,6 @@
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
-const crypto = require("crypto");
+const crypto = require("node:crypto");
 const { JWT_SECRET, REFRESH_SECRET } = require("../config");
 
 const OTP_EXPIRY_MS = 10 * 60 * 1000;

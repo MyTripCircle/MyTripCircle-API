@@ -20,7 +20,7 @@ router.post("/generate", requireAuth, async (req, res) => {
     if (!city || typeof city !== "string" || city.trim().length === 0 || city.trim().length > 100) {
       return res.status(400).json({ error: "invalid_city" });
     }
-    const daysInt = parseInt(days, 10);
+    const daysInt = Number.parseInt(days, 10);
     if (!daysInt || daysInt < 1 || daysInt > 30) {
       return res.status(400).json({ error: "invalid_days" });
     }

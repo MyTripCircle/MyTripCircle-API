@@ -1,5 +1,6 @@
 const express = require("express");
-const crypto = require("crypto");
+const crypto = require("node:crypto");
+const logger = require("../utils/logger");
 const { ObjectId } = require("mongodb");
 const { getDb } = require("../db");
 const { requireAuth } = require("../middleware/auth");
@@ -23,6 +24,9 @@ router.post("/invite-link", requireAuth, async (req, res) => {
 
     return res.json({ token, link: `mytripcircle://friend-invite/${token}` });
   } catch (e) {
+
+    logger.error("[friendInvites]", e.message);
+
     return res.status(500).json({ error: "Erreur interne du serveur" });
   }
 });
@@ -39,6 +43,9 @@ router.get("/invite-link/:token", async (req, res) => {
 
     return res.json({ userId: String(owner._id), name: owner.name, avatar: owner.avatar || null });
   } catch (e) {
+
+    logger.error("[friendInvites]", e.message);
+
     return res.status(500).json({ error: "Erreur interne du serveur" });
   }
 });
@@ -100,6 +107,9 @@ router.post("/invite-link/:token/accept", requireAuth, async (req, res) => {
 
     return res.json({ success: true });
   } catch (e) {
+
+    logger.error("[friendInvites]", e.message);
+
     return res.status(500).json({ error: "Erreur interne du serveur" });
   }
 });

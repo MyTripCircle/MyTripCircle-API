@@ -1,5 +1,6 @@
 const express = require("express");
-const crypto = require("crypto");
+const crypto = require("node:crypto");
+const logger = require("../utils/logger");
 const { ObjectId } = require("mongodb");
 const { getDb } = require("../db");
 const { requireAuth } = require("../middleware/auth");
@@ -80,6 +81,9 @@ router.post("/", requireAuth, async (req, res) => {
 
     return res.status(201).json(invitation);
   } catch (e) {
+
+    logger.error("[invitations]", e.message);
+
     return res.status(500).json({ error: "Erreur interne du serveur" });
   }
 });
@@ -115,6 +119,9 @@ router.get("/user/:email", requireAuth, async (req, res) => {
 
     return res.json(enriched);
   } catch (e) {
+
+    logger.error("[invitations]", e.message);
+
     return res.status(500).json({ error: "Erreur interne du serveur" });
   }
 });
@@ -135,6 +142,9 @@ router.get("/token/:token", async (req, res) => {
       inviter: inviter ? { _id: inviter._id, name: inviter.name, email: inviter.email, avatar: inviter.avatar } : null,
     });
   } catch (e) {
+
+    logger.error("[invitations]", e.message);
+
     return res.status(500).json({ error: "Erreur interne du serveur" });
   }
 });
@@ -163,6 +173,9 @@ router.get("/sent", requireAuth, async (req, res) => {
 
     return res.json(enriched);
   } catch (e) {
+
+    logger.error("[invitations]", e.message);
+
     return res.status(500).json({ error: "Erreur interne du serveur" });
   }
 });
@@ -207,6 +220,9 @@ router.post("/trip-link/:tripId", requireAuth, async (req, res) => {
 
     return res.status(201).json({ token, link: `${API_BASE_URL}/join/${token}` });
   } catch (e) {
+
+    logger.error("[invitations]", e.message);
+
     return res.status(500).json({ error: "Erreur interne du serveur" });
   }
 });
@@ -274,6 +290,9 @@ router.put("/:token", requireAuth, async (req, res) => {
 
     return res.json({ success: true, status: newStatus });
   } catch (e) {
+
+    logger.error("[invitations]", e.message);
+
     return res.status(500).json({ error: "Erreur interne du serveur" });
   }
 });
@@ -293,6 +312,9 @@ router.delete("/:id", requireAuth, async (req, res) => {
     await db.collection("invitations").deleteOne({ _id: new ObjectId(id) });
     return res.json({ success: true });
   } catch (e) {
+
+    logger.error("[invitations]", e.message);
+
     return res.status(500).json({ error: "Erreur interne du serveur" });
   }
 });
@@ -313,6 +335,9 @@ router.get("/join/:token", async (req, res) => {
     }
     return res.redirect(`mytripcircle://invitation/${token}`);
   } catch (e) {
+
+    logger.error("[invitations]", e.message);
+
     return res.status(500).json({ error: "Erreur interne du serveur" });
   }
 });

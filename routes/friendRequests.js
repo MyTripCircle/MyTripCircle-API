@@ -1,4 +1,5 @@
 const express = require("express");
+const logger = require("../utils/logger");
 const { ObjectId } = require("mongodb");
 const { getDb } = require("../db");
 const { requireAuth } = require("../middleware/auth");
@@ -102,6 +103,9 @@ router.post("/request", requireAuth, async (req, res) => {
 
     return res.json(friendRequest);
   } catch (e) {
+
+    logger.error("[friendRequests]", e.message);
+
     return res.status(500).json({ error: "Erreur interne du serveur" });
   }
 });
@@ -168,6 +172,9 @@ router.get("/requests", requireAuth, async (req, res) => {
       commonFriends: commonFriendsMap[r._id.toString()] ?? undefined,
     })));
   } catch (e) {
+
+    logger.error("[friendRequests]", e.message);
+
     return res.status(500).json({ error: "Erreur interne du serveur" });
   }
 });
@@ -210,6 +217,9 @@ router.put("/requests/:requestId", requireAuth, async (req, res) => {
 
     return res.json({ success: true });
   } catch (e) {
+
+    logger.error("[friendRequests]", e.message);
+
     return res.status(500).json({ error: "Erreur interne du serveur" });
   }
 });
@@ -229,6 +239,9 @@ router.delete("/requests/:requestId", requireAuth, async (req, res) => {
     await db.collection("friendRequests").deleteOne({ _id: new ObjectId(requestId) });
     return res.json({ success: true });
   } catch (e) {
+
+    logger.error("[friendRequests]", e.message);
+
     return res.status(500).json({ error: "Erreur interne du serveur" });
   }
 });

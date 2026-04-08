@@ -1,5 +1,6 @@
 const express = require("express");
 const bcrypt = require("bcrypt");
+const logger = require("../utils/logger");
 const { ObjectId } = require("mongodb");
 const { getDb } = require("../db");
 const { requireAuth } = require("../middleware/auth");
@@ -39,6 +40,9 @@ router.put("/me", requireAuth, async (req, res) => {
     const updated = await db.collection("users").findOne({ _id: userId });
     return res.json({ success: true, user: sanitizeUser(updated) });
   } catch (e) {
+
+    logger.error("[users]", e.message);
+
     return res.status(500).json({ success: false, error: "Erreur interne du serveur" });
   }
 });
@@ -80,6 +84,9 @@ router.put("/avatar", requireAuth, async (req, res) => {
     const updated = await db.collection("users").findOne({ _id: userId });
     return res.json({ success: true, user: sanitizeUser(updated) });
   } catch (e) {
+
+    logger.error("[users]", e.message);
+
     return res.status(500).json({ success: false, error: "Erreur interne du serveur" });
   }
 });
@@ -101,6 +108,9 @@ router.put("/settings", requireAuth, async (req, res) => {
     const updated = await db.collection("users").findOne({ _id: req.user._id });
     return res.json({ success: true, user: sanitizeUser(updated) });
   } catch (e) {
+
+    logger.error("[users]", e.message);
+
     return res.status(500).json({ success: false, error: "Erreur interne du serveur" });
   }
 });
@@ -121,6 +131,9 @@ router.put("/language", requireAuth, async (req, res) => {
     );
     return res.json({ success: true, language });
   } catch (e) {
+
+    logger.error("[users]", e.message);
+
     return res.status(500).json({ success: false, error: "Erreur interne du serveur" });
   }
 });
@@ -152,6 +165,9 @@ router.put("/change-password", requireAuth, async (req, res) => {
 
     return res.json({ success: true });
   } catch (e) {
+
+    logger.error("[users]", e.message);
+
     return res.status(500).json({ success: false, error: "Erreur interne du serveur" });
   }
 });
@@ -178,6 +194,9 @@ router.delete("/me", requireAuth, async (req, res) => {
     await db.collection("users").deleteOne({ _id: userId });
     return res.json({ success: true });
   } catch (e) {
+
+    logger.error("[users]", e.message);
+
     return res.status(500).json({ success: false, error: "Erreur interne du serveur" });
   }
 });
@@ -205,6 +224,9 @@ router.post("/batch", requireAuth, async (req, res) => {
       avatar: u.avatar,
     })));
   } catch (e) {
+
+    logger.error("[users]", e.message);
+
     return res.status(500).json({ error: "Erreur interne du serveur" });
   }
 });
@@ -264,6 +286,9 @@ router.get("/lookup", requireAuth, async (req, res) => {
         : "none",
     });
   } catch (e) {
+
+    logger.error("[users]", e.message);
+
     return res.status(500).json({ error: "Erreur interne du serveur" });
   }
 });

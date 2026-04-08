@@ -1,6 +1,6 @@
 const express = require("express");
 const jwt = require("jsonwebtoken");
-const crypto = require("crypto");
+const crypto = require("node:crypto");
 const { getDb } = require("../db");
 const { APPLE_APP_ID } = require("../config");
 const { authLimiter } = require("../middleware/rateLimiter");

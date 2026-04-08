@@ -25,7 +25,7 @@ function validateEnv() {
 
 module.exports = {
   validateEnv,
-  PORT: process.env.API_PORT ? parseInt(process.env.API_PORT, 10) : 4000,
+  PORT: process.env.API_PORT ? Number.parseInt(process.env.API_PORT, 10) : 4000,
   MONGODB_URI: process.env.MONGODB_URI,
   DB_NAME: process.env.DB_NAME || "mytripcircle",
   JWT_SECRET: process.env.JWT_SECRET,

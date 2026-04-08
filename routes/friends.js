@@ -110,8 +110,8 @@ router.get("/", requireAuth, async (req, res) => {
     const db = getDb();
     const userId = String(req.user._id);
 
-    const limit = Math.min(parseInt(req.query.limit) || 100, 200);
-    const skip = Math.max(parseInt(req.query.skip) || 0, 0);
+    const limit = Math.min(Number.parseInt(req.query.limit) || 100, 200);
+    const skip = Math.max(Number.parseInt(req.query.skip) || 0, 0);
     const friends = await db.collection("friends").find({ userId }).sort({ createdAt: -1 }).skip(skip).limit(limit).toArray();
 
     const friendObjectIds = friends

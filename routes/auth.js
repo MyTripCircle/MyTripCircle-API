@@ -1,6 +1,7 @@
 const express = require("express");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
+const logger = require("../utils/logger");
 const { ObjectId } = require("mongodb");
 const { getDb } = require("../db");
 const { REFRESH_SECRET } = require("../config");
@@ -88,6 +89,9 @@ router.post("/register", authLimiter, async (req, res) => {
     await sendOtpEmail(email, otp);
     return res.status(201).json({ success: true, userId: String(result.insertedId), message: "Code envoyé par email" });
   } catch (e) {
+
+    logger.error("[auth]", e.message);
+
     return res.status(500).json({ success: false, error: "Erreur interne du serveur" });
   }
 });
@@ -144,6 +148,9 @@ router.post("/login", authLimiter, async (req, res) => {
     const refreshToken = await createRefreshToken(db, user._id);
     return res.json({ success: true, token: accessToken, refreshToken, user: sanitizeUser(user) });
   } catch (e) {
+
+    logger.error("[auth]", e.message);
+
     return res.status(500).json({ success: false, error: "Erreur interne du serveur" });
   }
 });
@@ -181,6 +188,9 @@ router.post("/verify-otp", authLimiter, async (req, res) => {
     const refreshToken = await createRefreshToken(db, userId);
     return res.json({ success: true, token: accessToken, refreshToken, user: sanitizeUser(updatedUser) });
   } catch (e) {
+
+    logger.error("[auth]", e.message);
+
     return res.status(500).json({ success: false, error: "Erreur interne du serveur" });
   }
 });
@@ -206,6 +216,9 @@ router.post("/resend-otp", authLimiter, async (req, res) => {
     await sendOtpEmail(user.email, otp);
     return res.json({ success: true, message: "Code renvoyé" });
   } catch (e) {
+
+    logger.error("[auth]", e.message);
+
     return res.status(500).json({ success: false, error: "Erreur interne du serveur" });
   }
 });
