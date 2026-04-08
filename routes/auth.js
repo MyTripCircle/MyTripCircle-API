@@ -1,100 +1,24 @@
 const express = require("express");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
-const crypto = require("crypto");
 const { ObjectId } = require("mongodb");
 const { getDb } = require("../db");
-const { JWT_SECRET, REFRESH_SECRET, API_BASE_URL, APPLE_APP_ID } = require("../config");
-const {
-  sendOtpEmail,
-  sendPasswordResetEmail,
-} = require("../utils/email");
+const { REFRESH_SECRET } = require("../config");
+const { sendOtpEmail } = require("../utils/email");
 const { authLimiter } = require("../middleware/rateLimiter");
 const { linkPendingFriendRequests } = require("./friends");
 const { isValidEmail, isValidPhone } = require("../utils/validators");
-const logger = require("../utils/logger");
-
-const OTP_EXPIRY_MS = 10 * 60 * 1000;
+const {
+  OTP_EXPIRY_MS,
+  trimIfString,
+  isStrongPassword,
+  sanitizeUser,
+  signAccessToken,
+  createRefreshToken,
+  generateOtp,
+} = require("../utils/authHelpers");
 
 const router = express.Router();
-
-function trimIfString(v) {
-  return typeof v === "string" ? v.trim() : v;
-}
-
-function isStrongPassword(password) {
-  if (typeof password !== "string") return false;
-  return /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{8,}$/.test(password);
-}
-
-// Cache des clés publiques Apple (JWKS)
-let appleKeysCache = null;
-let appleKeysCacheAt = 0;
-
-async function getApplePublicKeys() {
-  // Rafraîchit le cache toutes les heures
-  if (appleKeysCache && Date.now() - appleKeysCacheAt < 60 * 60 * 1000) {
-    return appleKeysCache;
-  }
-  const res = await fetch("https://appleid.apple.com/auth/keys");
-  if (!res.ok) throw new Error("Impossible de récupérer les clés Apple");
-  const { keys } = await res.json();
-  appleKeysCache = keys;
-  appleKeysCacheAt = Date.now();
-  return keys;
-}
-
-async function verifyAppleToken(identityToken) {
-  const parts = identityToken.split(".");
-  if (parts.length !== 3) throw new Error("Format de token Apple invalide");
-
-  const header = JSON.parse(Buffer.from(parts[0], "base64url").toString("utf8"));
-  const keys = await getApplePublicKeys();
-  const jwk = keys.find((k) => k.kid === header.kid);
-  if (!jwk) throw new Error("Clé publique Apple introuvable");
-
-  const publicKey = crypto.createPublicKey({ key: jwk, format: "jwk" });
-  const pem = publicKey.export({ type: "spki", format: "pem" });
-
-  const verifyOptions = { algorithms: ["RS256"] };
-  if (APPLE_APP_ID) verifyOptions.audience = APPLE_APP_ID;
-
-  return jwt.verify(identityToken, pem, verifyOptions);
-}
-
-function sanitizeUser(doc) {
-  if (!doc) return null;
-  return {
-    id: String(doc._id),
-    name: doc.name,
-    email: doc.email,
-    phone: doc.phone,
-    avatar: doc.avatar,
-    verified: doc.verified || false,
-    createdAt: doc.createdAt,
-    language: doc.language || "fr",
-    isPublicProfile: doc.isPublicProfile === true,
-  };
-}
-
-function signAccessToken(userId) {
-  return jwt.sign({ id: String(userId) }, JWT_SECRET, { expiresIn: "15m" });
-}
-
-async function createRefreshToken(db, userId) {
-  const token = jwt.sign({ id: String(userId) }, REFRESH_SECRET, { expiresIn: "7d" });
-  await db.collection("refreshTokens").insertOne({
-    token,
-    userId: String(userId),
-    createdAt: new Date(),
-    expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-  });
-  return token;
-}
-
-function generateOtp() {
-  return crypto.randomInt(100000, 1000000).toString();
-}
 
 // POST /users/register
 router.post("/register", authLimiter, async (req, res) => {
@@ -162,7 +86,6 @@ router.post("/register", authLimiter, async (req, res) => {
     });
 
     await sendOtpEmail(email, otp);
-
     return res.status(201).json({ success: true, userId: String(result.insertedId), message: "Code envoyé par email" });
   } catch (e) {
     return res.status(500).json({ success: false, error: "Erreur interne du serveur" });
@@ -284,255 +207,6 @@ router.post("/resend-otp", authLimiter, async (req, res) => {
     return res.json({ success: true, message: "Code renvoyé" });
   } catch (e) {
     return res.status(500).json({ success: false, error: "Erreur interne du serveur" });
-  }
-});
-
-// POST /users/forgot-password
-router.post("/forgot-password", authLimiter, async (req, res) => {
-  try {
-    const db = getDb();
-    const email = trimIfString(req.body?.email)?.toLowerCase();
-
-    if (!email) return res.status(400).json({ success: false, error: "Email requis" });
-
-    const user = await db.collection("users").findOne({ email });
-    // Réponse identique que l'utilisateur existe ou non (anti-énumération d'emails)
-    if (!user) {
-      return res.json({ success: true, message: "Si un compte existe, un lien a été envoyé" });
-    }
-
-    const resetToken = crypto.randomBytes(32).toString("hex");
-    await db.collection("users").updateOne(
-      { _id: user._id },
-      { $set: { resetToken, resetTokenExpiresAt: new Date(Date.now() + 60 * 60 * 1000), updatedAt: new Date() } }
-    );
-
-    await sendPasswordResetEmail(email, resetToken);
-    return res.json({ success: true, message: "Si un compte existe, un lien a été envoyé" });
-  } catch (e) {
-    return res.status(500).json({ success: false, error: "Erreur interne du serveur" });
-  }
-});
-
-// GET /users/verify-reset-token
-router.get("/verify-reset-token", async (req, res) => {
-  try {
-    const db = getDb();
-    const { code } = req.query;
-
-    if (!code) return res.status(400).json({ success: false, error: "Code manquant" });
-
-    const user = await db.collection("users").findOne({
-      resetCode: code,
-      resetCodeExpiresAt: { $gt: new Date() },
-    });
-
-    if (!user) return res.status(400).json({ success: false, error: "Lien invalide ou déjà utilisé" });
-    return res.json({ success: true });
-  } catch (e) {
-    return res.status(500).json({ success: false, error: "Erreur interne du serveur" });
-  }
-});
-
-// POST /users/reset-password
-router.post("/reset-password", authLimiter, async (req, res) => {
-  try {
-    const db = getDb();
-    const { code, newPassword } = req.body;
-
-    if (!code || !newPassword) {
-      return res.status(400).json({ success: false, error: "Code et nouveau mot de passe requis" });
-    }
-
-    if (!isStrongPassword(newPassword)) {
-      return res.status(400).json({ success: false, error: "Mot de passe trop faible", field: "password" });
-    }
-
-    const user = await db.collection("users").findOne({
-      resetCode: code,
-      resetCodeExpiresAt: { $gt: new Date() },
-    });
-
-    if (!user) return res.status(400).json({ success: false, error: "Code invalide ou expiré" });
-
-    const passwordHash = await bcrypt.hash(newPassword, 10);
-    await db.collection("users").updateOne(
-      { _id: user._id },
-      {
-        $set: { password: passwordHash, updatedAt: new Date() },
-        $unset: { resetCode: "", resetCodeExpiresAt: "", passwordHash: "" },
-      }
-    );
-
-    const accessToken = signAccessToken(user._id);
-    const refreshToken = await createRefreshToken(db, user._id);
-    return res.json({ success: true, token: accessToken, refreshToken, user: sanitizeUser(user) });
-  } catch (e) {
-    return res.status(500).json({ success: false, error: "Erreur interne du serveur" });
-  }
-});
-
-// POST /users/google
-router.post("/google", authLimiter, async (req, res) => {
-  const { accessToken } = req.body;
-  if (!accessToken) return res.status(400).json({ success: false, error: "accessToken manquant" });
-
-  try {
-    const db = getDb();
-    const googleRes = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
-    if (!googleRes.ok) return res.status(401).json({ success: false, error: "Token Google invalide" });
-
-    const { sub: googleId, email, name, picture } = await googleRes.json();
-    if (!email) return res.status(400).json({ success: false, error: "Aucun email retourné par Google" });
-
-    let user = await db.collection("users").findOne({ $or: [{ googleId }, { email }] });
-    if (!user) {
-      const result = await db.collection("users").insertOne({
-        name: name || email.split("@")[0],
-        email,
-        googleId,
-        avatar: picture || null,
-        verified: true,
-        createdAt: new Date(),
-      });
-      user = await db.collection("users").findOne({ _id: result.insertedId });
-    } else if (!user.googleId) {
-      await db.collection("users").updateOne({ _id: user._id }, { $set: { googleId } });
-    }
-
-    const accessToken = signAccessToken(user._id);
-    const refreshToken = await createRefreshToken(db, user._id);
-    return res.json({ success: true, token: accessToken, refreshToken, user: sanitizeUser(user) });
-  } catch (e) {
-    logger.error("[auth/google] Erreur d'authentification");
-    return res.status(500).json({ success: false, error: "Authentification Google échouée" });
-  }
-});
-
-// POST /users/apple
-router.post("/apple", authLimiter, async (req, res) => {
-  const { identityToken, email, fullName } = req.body;
-  if (!identityToken) return res.status(400).json({ success: false, error: "identityToken manquant" });
-
-  try {
-    const db = getDb();
-
-    // Vérification cryptographique du token Apple via JWKS
-    let payload;
-    try {
-      payload = await verifyAppleToken(identityToken);
-    } catch (e) {
-      logger.error("[auth/apple] Vérification du token échouée");
-      return res.status(401).json({ success: false, error: "Token Apple invalide" });
-    }
-
-    const { sub: appleId, email: tokenEmail } = payload;
-    if (!appleId) return res.status(401).json({ success: false, error: "Token Apple invalide" });
-
-    const userEmail = email || tokenEmail || null;
-    const userName = fullName
-      ? `${fullName.givenName || ""} ${fullName.familyName || ""}`.trim()
-      : (userEmail ? userEmail.split("@")[0] : "User");
-
-    let user = await db.collection("users").findOne({
-      $or: [{ appleId }, ...(userEmail ? [{ email: userEmail }] : [])],
-    });
-    if (!user) {
-      const result = await db.collection("users").insertOne({
-        name: userName || "User",
-        email: userEmail,
-        appleId,
-        verified: true,
-        createdAt: new Date(),
-      });
-      user = await db.collection("users").findOne({ _id: result.insertedId });
-    } else if (!user.appleId) {
-      await db.collection("users").updateOne({ _id: user._id }, { $set: { appleId } });
-    }
-
-    const accessToken = signAccessToken(user._id);
-    const refreshToken = await createRefreshToken(db, user._id);
-    return res.json({ success: true, token: accessToken, refreshToken, user: sanitizeUser(user) });
-  } catch (e) {
-    logger.error("[auth/apple] Erreur d'authentification");
-    return res.status(500).json({ success: false, error: "Authentification Apple échouée" });
-  }
-});
-
-// Page HTML de reset de mot de passe (deep link → app)
-function errorPage(message) {
-  return `<!DOCTYPE html>
-<html lang="fr">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Lien invalide</title>
-  <style>
-    body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; margin: 0; background: #F5F0E8; color: #2A2318; }
-    h2 { font-size: 22px; margin-bottom: 12px; }
-    p { color: #7A6A58; text-align: center; max-width: 320px; }
-    .icon { font-size: 52px; margin-bottom: 16px; }
-  </style>
-</head>
-<body>
-  <div class="icon">🔒</div>
-  <h2>Lien invalide</h2>
-  <p>${message}</p>
-</body>
-</html>`;
-}
-
-router.get("/reset-password-page", async (req, res) => {
-  const { token } = req.query;
-  if (!token) return res.status(400).send(errorPage("Token manquant."));
-
-  try {
-    const db = getDb();
-    const user = await db.collection("users").findOne({
-      resetToken: token,
-      resetTokenExpiresAt: { $gt: new Date() },
-    });
-
-    if (!user) return res.status(400).send(errorPage("Ce lien est invalide ou a déjà été utilisé."));
-
-    // Échange côté serveur : on consomme le token email et on génère un code
-    // court-vécu (10 min) transmis uniquement via le deep link vers l'app.
-    // Le token original est supprimé immédiatement pour qu'il ne soit plus
-    // réutilisable même s'il est capturé dans les logs ou l'historique navigateur.
-    const resetCode = crypto.randomBytes(16).toString("hex");
-    await db.collection("users").updateOne(
-      { _id: user._id },
-      {
-        $set: { resetCode, resetCodeExpiresAt: new Date(Date.now() + OTP_EXPIRY_MS) },
-        $unset: { resetToken: "", resetTokenExpiresAt: "" },
-      }
-    );
-
-    const deepLink = `mytripcircle://reset-password?code=${resetCode}`;
-    return res.send(`<!DOCTYPE html>
-<html lang="fr">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Réinitialisation du mot de passe</title>
-  <style>
-    body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; margin: 0; background: #F5F0E8; color: #2A2318; }
-    h2 { font-size: 22px; margin-bottom: 12px; }
-    p { color: #7A6A58; margin-bottom: 24px; text-align: center; max-width: 320px; }
-    a { background: #C4714A; color: white; padding: 14px 28px; border-radius: 12px; text-decoration: none; font-size: 16px; }
-  </style>
-  <script>window.location.href = "${deepLink}";</script>
-</head>
-<body>
-  <h2>MyTripCircle</h2>
-  <p>Appuyez sur le bouton ci-dessous pour réinitialiser votre mot de passe dans l'app.</p>
-  <a href="${deepLink}">Ouvrir l'application</a>
-</body>
-</html>`);
-  } catch (e) {
-    return res.status(500).send(errorPage("Une erreur est survenue. Réessayez."));
   }
 });
 

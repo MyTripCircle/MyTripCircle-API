@@ -11,12 +11,16 @@ const { generalLimiter } = require("./middleware/rateLimiter");
 const { errorHandler, notFound } = require("./middleware/errorHandler");
 
 const { router: authRouter } = require("./routes/auth");
+const oauthRouter = require("./routes/oauth");
+const otpRouter = require("./routes/otp");
 const usersRouter = require("./routes/users");
 const tripsRouter = require("./routes/trips");
 const bookingsRouter = require("./routes/bookings");
 const addressesRouter = require("./routes/addresses");
 const invitationsRouter = require("./routes/invitations");
 const friendsRouter = require("./routes/friends");
+const friendRequestsRouter = require("./routes/friendRequests");
+const friendInvitesRouter = require("./routes/friendInvites");
 const itineraryRouter = require("./routes/itinerary");
 
 // Validation des variables d'environnement au démarrage
@@ -54,12 +58,16 @@ app.use((req, _res, next) => {
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
 app.use("/users", authRouter);
+app.use("/users", oauthRouter);
+app.use("/users", otpRouter);
 app.use("/users", usersRouter);
 app.use("/trips", tripsRouter);
 app.use("/bookings", bookingsRouter);
 app.use("/addresses", addressesRouter);
 app.use("/invitations", invitationsRouter);
 app.use("/friends", friendsRouter);
+app.use("/friends", friendRequestsRouter);
+app.use("/friends", friendInvitesRouter);
 app.use("/itinerary", itineraryRouter);
 
 // Deep link redirect (reset mot de passe)

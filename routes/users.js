@@ -3,7 +3,7 @@ const bcrypt = require("bcrypt");
 const { ObjectId } = require("mongodb");
 const { getDb } = require("../db");
 const { requireAuth } = require("../middleware/auth");
-const { sanitizeUser, isStrongPassword, trimIfString } = require("./auth");
+const { sanitizeUser, isStrongPassword, trimIfString } = require("../utils/authHelpers");
 const { linkPendingFriendRequests } = require("./friends");
 const { isValidEmail, isValidPhone } = require("../utils/validators");
 
