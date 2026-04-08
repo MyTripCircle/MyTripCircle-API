@@ -96,9 +96,10 @@ Rédige en français. Ne mets rien avant ou après le JSON.`;
 
     let parsedData;
     try {
-      const jsonMatch = rawText.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) throw new Error("Aucun objet JSON trouvé");
-      parsedData = JSON.parse(jsonMatch[0]);
+      const start = rawText.indexOf("{");
+      const end = rawText.lastIndexOf("}");
+      if (start === -1 || end === -1 || end <= start) throw new Error("Aucun objet JSON trouvé");
+      parsedData = JSON.parse(rawText.slice(start, end + 1));
     } catch {
       return res.status(500).json({ error: "parse_error" });
     }

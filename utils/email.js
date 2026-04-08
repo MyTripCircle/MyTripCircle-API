@@ -5,7 +5,7 @@ let transporter = null;
 
 if (MAIL_USER && MAIL_PASS) {
   transporter = nodemailer.createTransport({
-    service: "gmail",
+    service: "gmail", // NOSONAR — nodemailer utilise SMTP+TLS, pas HTTP
     auth: { user: MAIL_USER, pass: MAIL_PASS },
   });
 } else {
