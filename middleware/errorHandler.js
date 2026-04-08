@@ -1,6 +1,8 @@
 // Gestionnaire d'erreurs centralisé — à monter EN DERNIER dans app.use()
+const logger = require("../utils/logger");
+
 function errorHandler(err, req, res, _next) {
-  console.error(`[error] ${req.method} ${req.path}:`, err.message);
+  logger.error(`[error] ${req.method} ${req.path}:`, err.message);
   const status = err.status || 500;
   res.status(status).json({
     success: false,

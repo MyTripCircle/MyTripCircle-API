@@ -2,6 +2,7 @@ const express = require("express");
 const { getDb } = require("../db");
 const { requireAuth } = require("../middleware/auth");
 const { GROQ_API_KEY } = require("../config");
+const logger = require("../utils/logger");
 
 const router = express.Router();
 
@@ -40,8 +41,9 @@ router.post("/generate", requireAuth, async (req, res) => {
         { userId, createdAt: { $gte: since24h } },
         { sort: { createdAt: 1 } }
       );
-      const resetAt = new Date(oldest.createdAt.getTime() + 24 * 60 * 60 * 1000);
-      const resetIn = Math.ceil((resetAt.getTime() - now.getTime()) / 1000);
+      const resetIn = oldest
+        ? Math.ceil((new Date(oldest.createdAt.getTime() + 24 * 60 * 60 * 1000).getTime() - now.getTime()) / 1000)
+        : 0;
       return res.status(429).json({ error: "daily_limit_reached", limit: DAILY_LIMIT, resetIn });
     }
 
@@ -101,18 +103,22 @@ Rédige en français. Ne mets rien avant ou après le JSON.`;
       return res.status(500).json({ error: "parse_error" });
     }
 
-    await Promise.all([
-      db.collection("itinerary_cache").insertOne({
-        city: cityNormalized, days: daysInt, itinerary: parsedData, createdAt: new Date(),
-      }),
-      db.collection("itinerary_usage").insertOne({
-        userId, city: cityNormalized, days: daysInt, createdAt: new Date(),
-      }),
-    ]);
+    try {
+      await Promise.all([
+        db.collection("itinerary_cache").insertOne({
+          city: cityNormalized, days: daysInt, itinerary: parsedData, createdAt: new Date(),
+        }),
+        db.collection("itinerary_usage").insertOne({
+          userId, city: cityNormalized, days: daysInt, createdAt: new Date(),
+        }),
+      ]);
+    } catch (cacheErr) {
+      logger.error("[itinerary] Erreur lors de l'écriture en cache :", cacheErr.message);
+    }
 
     return res.json({ cached: false, itinerary: parsedData });
   } catch (e) {
-    console.error("[itinerary]", e.message);
+    logger.error("[itinerary]", e.message);
     return res.status(500).json({ error: "Erreur interne du serveur" });
   }
 });

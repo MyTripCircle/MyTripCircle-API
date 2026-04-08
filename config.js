@@ -4,6 +4,7 @@ const REQUIRED_VARS = ["MONGODB_URI", "JWT_SECRET", "REFRESH_SECRET"];
 function validateEnv() {
   const missing = REQUIRED_VARS.filter((key) => !process.env[key]);
   if (missing.length > 0) {
+    // console.error direct : logger non disponible avant l'initialisation de l'app
     console.error(
       `[config] Variables d'environnement manquantes : ${missing.join(", ")}`
     );
@@ -11,8 +12,13 @@ function validateEnv() {
   }
 
   if (process.env.JWT_SECRET === "dev-secret-change-me") {
+    if (process.env.NODE_ENV === "production") {
+      throw new Error(
+        "[config] JWT_SECRET utilise la valeur par défaut. Changez-la avant de démarrer en production."
+      );
+    }
     console.warn(
-      "[config] AVERTISSEMENT : JWT_SECRET est encore la valeur par défaut. Changez-la en production."
+      "[config] AVERTISSEMENT : JWT_SECRET est encore la valeur par défaut. Changez-la avant de passer en production."
     );
   }
 }

@@ -8,9 +8,8 @@ if (MAIL_USER && MAIL_PASS) {
     service: "gmail",
     auth: { user: MAIL_USER, pass: MAIL_PASS },
   });
-  console.log("[email] Transporteur configuré");
 } else {
-  console.log("[email] Transporteur non configuré – emails uniquement loggés");
+  console.warn("[email] Transporteur non configuré – les emails ne seront pas envoyés");
 }
 
 // ─── Charte graphique ─────────────────────────────────────────────────────────
@@ -58,7 +57,6 @@ function wrap(content) {
 
 async function _send(to, subject, html, text) {
   if (!transporter) {
-    console.log(`[email] (non envoyé) À: ${to} | Sujet: ${subject}`);
     return { success: true, logged: true };
   }
   try {
@@ -69,10 +67,9 @@ async function _send(to, subject, html, text) {
       html,
       text,
     });
-    console.log(`[email] Envoyé à ${to}`);
     return { success: true };
   } catch (err) {
-    console.error(`[email] Erreur lors de l'envoi à ${to}:`, err.message);
+    console.error("[email] Erreur lors de l'envoi d'un email");
     return { success: false, error: err.message };
   }
 }

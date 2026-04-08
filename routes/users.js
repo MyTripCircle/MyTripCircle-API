@@ -5,6 +5,7 @@ const { getDb } = require("../db");
 const { requireAuth } = require("../middleware/auth");
 const { sanitizeUser, isStrongPassword, trimIfString } = require("./auth");
 const { linkPendingFriendRequests } = require("./friends");
+const { isValidEmail, isValidPhone } = require("../utils/validators");
 
 const router = express.Router();
 
@@ -217,10 +218,10 @@ router.get("/lookup", requireAuth, async (req, res) => {
 
     if (!email && !phone) return res.status(400).json({ error: "email ou phone requis" });
 
-    if (email && (typeof email !== "string" || !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email.trim()))) {
+    if (email && !isValidEmail(email.trim())) {
       return res.status(400).json({ error: "Format d'email invalide" });
     }
-    if (phone && (typeof phone !== "string" || !/^\+?[\d\s\-().]{6,20}$/.test(phone.trim()))) {
+    if (phone && !isValidPhone(phone.trim())) {
       return res.status(400).json({ error: "Format de téléphone invalide" });
     }
 

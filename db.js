@@ -1,5 +1,9 @@
 const { MongoClient } = require("mongodb");
 const { MONGODB_URI, DB_NAME } = require("./config");
+const logger = require("./utils/logger");
+
+const TTL_ITINERARY_CACHE_S = 604800;  // 7 jours
+const TTL_ITINERARY_USAGE_S = 86400;   // 24 heures
 
 let db;
 
@@ -7,7 +11,7 @@ async function connectMongo() {
   const client = new MongoClient(MONGODB_URI);
   await client.connect();
   db = client.db(DB_NAME);
-  console.log(`[db] Connecté à MongoDB : ${DB_NAME}`);
+  logger.info(`[db] Connecté à MongoDB : ${DB_NAME}`);
 
   await _ensureIndexes();
   await _updateUsersValidator();
@@ -21,14 +25,18 @@ function getDb() {
 async function _ensureIndexes() {
   try {
     await db.collection("users").createIndex({ email: 1 }, { unique: true });
-  } catch (_) {}
+  } catch (err) {
+    logger.error("[db] Erreur lors de la création de l'index users.email :", err.message);
+  }
 
   try {
     await db.collection("itinerary_cache").createIndex({ city: 1, days: 1 });
     await db
       .collection("itinerary_cache")
-      .createIndex({ createdAt: 1 }, { expireAfterSeconds: 604800 });
-  } catch (_) {}
+      .createIndex({ createdAt: 1 }, { expireAfterSeconds: TTL_ITINERARY_CACHE_S });
+  } catch (err) {
+    logger.error("[db] Erreur lors de la création des index itinerary_cache :", err.message);
+  }
 
   try {
     await db
@@ -36,8 +44,10 @@ async function _ensureIndexes() {
       .createIndex({ userId: 1, createdAt: 1 });
     await db
       .collection("itinerary_usage")
-      .createIndex({ createdAt: 1 }, { expireAfterSeconds: 86400 });
-  } catch (_) {}
+      .createIndex({ createdAt: 1 }, { expireAfterSeconds: TTL_ITINERARY_USAGE_S });
+  } catch (err) {
+    logger.error("[db] Erreur lors de la création des index itinerary_usage :", err.message);
+  }
 }
 
 async function _updateUsersValidator() {
@@ -64,10 +74,10 @@ async function _updateUsersValidator() {
         validationAction: info?.options?.validationAction || "error",
       });
 
-      console.log("[db] Validateur users mis à jour (phone activé)");
+      logger.info("[db] Validateur users mis à jour (phone activé)");
     }
   } catch (e) {
-    console.log("[db] Impossible de mettre à jour le validateur users :", e?.message);
+    logger.warn("[db] Impossible de mettre à jour le validateur users :", e?.message);
   }
 }
 

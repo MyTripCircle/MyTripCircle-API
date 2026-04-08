@@ -3,6 +3,7 @@ const crypto = require("crypto");
 const { ObjectId } = require("mongodb");
 const { getDb } = require("../db");
 const { requireAuth } = require("../middleware/auth");
+const logger = require("../utils/logger");
 const {
   sendFriendRequestEmail,
   sendFriendRequestFoundEmail,
@@ -47,7 +48,7 @@ async function linkPendingFriendRequests(userId, userEmail, userPhone) {
 
     return pending.length;
   } catch (e) {
-    console.error("[friends] Erreur lors du lien des demandes en attente :", e.message);
+    logger.error("[friends] Erreur lors du lien des demandes en attente :", e.message);
     return 0;
   }
 }

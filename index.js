@@ -6,6 +6,7 @@ const helmet = require("helmet");
 
 const { validateEnv, PORT } = require("./config");
 const { connectMongo } = require("./db");
+const logger = require("./utils/logger");
 const { generalLimiter } = require("./middleware/rateLimiter");
 const { errorHandler, notFound } = require("./middleware/errorHandler");
 
@@ -45,7 +46,7 @@ app.use(generalLimiter);
 
 // ─── Logging minimal ──────────────────────────────────────────────────────────
 app.use((req, _res, next) => {
-  console.log(`[server] ${req.method} ${req.path}`);
+  logger.debug(`[server] ${req.method} ${req.path}`);
   next();
 });
 
@@ -96,24 +97,24 @@ const ACTIVE_IP =
 connectMongo()
   .then(() => {
     app.listen(PORT, () => {
-      console.log(`[server] API démarrée sur http://${ACTIVE_IP}:${PORT}`);
-      console.log(`[server] Également accessible via http://localhost:${PORT}`);
+      logger.info(`[server] API démarrée sur http://${ACTIVE_IP}:${PORT}`);
+      logger.info(`[server] Également accessible via http://localhost:${PORT}`);
     });
   })
   .catch((err) => {
-    console.error("[server] Erreur de connexion MongoDB :", err);
+    logger.error("[server] Erreur de connexion MongoDB :", err);
     process.exit(1);
   });
 
 process.on("SIGINT", () => {
-  console.log("\n[server] Arrêt propre...");
+  logger.info("\n[server] Arrêt propre...");
   process.exit(0);
 });
 
 process.on("uncaughtException", (err) => {
-  console.error("[server] Exception non capturée :", err);
+  logger.error("[server] Exception non capturée :", err);
 });
 
 process.on("unhandledRejection", (reason) => {
-  console.error("[server] Rejet de promesse non géré :", reason);
+  logger.error("[server] Rejet de promesse non géré :", reason);
 });

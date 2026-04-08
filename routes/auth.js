@@ -11,15 +11,15 @@ const {
 } = require("../utils/email");
 const { authLimiter } = require("../middleware/rateLimiter");
 const { linkPendingFriendRequests } = require("./friends");
+const { isValidEmail, isValidPhone } = require("../utils/validators");
+const logger = require("../utils/logger");
+
+const OTP_EXPIRY_MS = 10 * 60 * 1000;
 
 const router = express.Router();
 
 function trimIfString(v) {
   return typeof v === "string" ? v.trim() : v;
-}
-
-function isValidEmail(email) {
-  return typeof email === "string" && /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email);
 }
 
 function isStrongPassword(password) {
@@ -93,7 +93,7 @@ async function createRefreshToken(db, userId) {
 }
 
 function generateOtp() {
-  return Math.floor(100000 + Math.random() * 900000).toString();
+  return crypto.randomInt(100000, 1000000).toString();
 }
 
 // POST /users/register
@@ -118,7 +118,7 @@ router.post("/register", authLimiter, async (req, res) => {
     }
 
     if (phone) {
-      if (!/^[+]?[\d\s().-]{7,20}$/.test(phone)) {
+      if (!isValidPhone(phone)) {
         return res.status(400).json({ success: false, error: "Numéro de téléphone invalide", field: "phone" });
       }
       const existingPhone = await db.collection("users").findOne({ phone, verified: true });
@@ -133,7 +133,7 @@ router.post("/register", authLimiter, async (req, res) => {
         const otp = generateOtp();
         await db.collection("users").updateOne(
           { _id: existing._id },
-          { $set: { otp, otpExpiresAt: new Date(Date.now() + 10 * 60 * 1000), updatedAt: new Date() } }
+          { $set: { otp, otpExpiresAt: new Date(Date.now() + OTP_EXPIRY_MS), updatedAt: new Date() } }
         );
         await sendOtpEmail(email, otp);
         return res.status(200).json({
@@ -155,7 +155,7 @@ router.post("/register", authLimiter, async (req, res) => {
       password: passwordHash,
       phone,
       otp,
-      otpExpiresAt: new Date(Date.now() + 10 * 60 * 1000),
+      otpExpiresAt: new Date(Date.now() + OTP_EXPIRY_MS),
       verified: false,
       createdAt: new Date(),
       updatedAt: new Date(),
@@ -206,7 +206,7 @@ router.post("/login", authLimiter, async (req, res) => {
       const newOtp = generateOtp();
       await db.collection("users").updateOne(
         { _id: user._id },
-        { $set: { otp: newOtp, otpExpiresAt: new Date(Date.now() + 10 * 60 * 1000) } }
+        { $set: { otp: newOtp, otpExpiresAt: new Date(Date.now() + OTP_EXPIRY_MS) } }
       );
       await sendOtpEmail(user.email, newOtp);
       return res.status(403).json({
@@ -277,7 +277,7 @@ router.post("/resend-otp", authLimiter, async (req, res) => {
     const otp = generateOtp();
     await db.collection("users").updateOne(
       { _id: user._id },
-      { $set: { otp, otpExpiresAt: new Date(Date.now() + 10 * 60 * 1000), updatedAt: new Date() } }
+      { $set: { otp, otpExpiresAt: new Date(Date.now() + OTP_EXPIRY_MS), updatedAt: new Date() } }
     );
 
     await sendOtpEmail(user.email, otp);
@@ -406,7 +406,7 @@ router.post("/google", authLimiter, async (req, res) => {
     const refreshToken = await createRefreshToken(db, user._id);
     return res.json({ success: true, token: accessToken, refreshToken, user: sanitizeUser(user) });
   } catch (e) {
-    console.error("[auth/google]", e.message);
+    logger.error("[auth/google] Erreur d'authentification");
     return res.status(500).json({ success: false, error: "Authentification Google échouée" });
   }
 });
@@ -424,7 +424,7 @@ router.post("/apple", authLimiter, async (req, res) => {
     try {
       payload = await verifyAppleToken(identityToken);
     } catch (e) {
-      console.error("[auth/apple] Vérification token échouée :", e.message);
+      logger.error("[auth/apple] Vérification du token échouée");
       return res.status(401).json({ success: false, error: "Token Apple invalide" });
     }
 
@@ -456,7 +456,7 @@ router.post("/apple", authLimiter, async (req, res) => {
     const refreshToken = await createRefreshToken(db, user._id);
     return res.json({ success: true, token: accessToken, refreshToken, user: sanitizeUser(user) });
   } catch (e) {
-    console.error("[auth/apple]", e.message);
+    logger.error("[auth/apple] Erreur d'authentification");
     return res.status(500).json({ success: false, error: "Authentification Apple échouée" });
   }
 });
