@@ -100,6 +100,7 @@ router.get("/suggestions", requireAuth, async (req, res) => {
     suggestions.sort((a, b) => b.commonFriends - a.commonFriends);
     return res.json(suggestions);
   } catch (e) {
+    logger.error("[friends/suggestions]", e.message);
     return res.status(500).json({ error: "Erreur interne du serveur" });
   }
 });
@@ -134,6 +135,7 @@ router.get("/", requireAuth, async (req, res) => {
       createdAt: f.createdAt,
     })));
   } catch (e) {
+    logger.error("[friends/list]", e.message);
     return res.status(500).json({ error: "Erreur interne du serveur" });
   }
 });
@@ -151,6 +153,7 @@ router.delete("/:friendId", requireAuth, async (req, res) => {
 
     return res.json({ success: true });
   } catch (e) {
+    logger.error("[friends/delete]", e.message);
     return res.status(500).json({ error: "Erreur interne du serveur" });
   }
 });
@@ -234,6 +237,7 @@ router.get("/:friendId/profile", requireAuth, async (req, res) => {
       sharedTrips: sharedTrips.map(formatTrip),
     });
   } catch (e) {
+    logger.error("[friends/profile]", e.message);
     return res.status(500).json({ error: "Erreur interne du serveur" });
   }
 });

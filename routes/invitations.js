@@ -68,7 +68,7 @@ router.post("/", requireAuth, async (req, res) => {
     if (inviteeEmail) {
       const inviter = await db.collection("users").findOne({ _id: new ObjectId(inviterId) });
       const inviteeUser = await db.collection("users").findOne({ email: inviteeEmail });
-      await sendTripInvitationEmail(inviteeEmail, inviteeUser?.language || "fr", {
+      await sendTripInvitationEmail(inviteeEmail, {
         inviterName: inviter?.name || "Quelqu'un",
         tripTitle: trip.title,
         tripDestination: trip.destination,
@@ -76,7 +76,7 @@ router.post("/", requireAuth, async (req, res) => {
         tripEndDate: trip.endDate,
         message,
         invitationLink: `mytripcircle://invitation/${token}`,
-      });
+      }, inviteeUser?.language || "fr");
     }
 
     return res.status(201).json(invitation);

@@ -118,11 +118,11 @@ router.post("/", requireAuth, async (req, res) => {
       return res.status(400).json({ error: "Note invalide (0-5)" });
     }
     if (website) {
-      try { const u = new URL(website); if (!["http:", "https:"].includes(u.protocol)) throw new Error(); }
+      try { const u = new URL(website); if (!["http:", "https:"].includes(u.protocol)) throw new Error("Protocole non autorisé"); }
       catch { return res.status(400).json({ error: "URL du site invalide" }); }
     }
     if (photoUrl) {
-      try { const u = new URL(photoUrl); if (!["http:", "https:"].includes(u.protocol)) throw new Error(); }
+      try { const u = new URL(photoUrl); if (!["http:", "https:"].includes(u.protocol)) throw new Error("Protocole non autorisé"); }
       catch { return res.status(400).json({ error: "URL de la photo invalide" }); }
     }
 
@@ -195,11 +195,11 @@ router.put("/:id", requireAuth, async (req, res) => {
       return res.status(400).json({ error: "Note invalide (0-5)" });
     }
     if (website) {
-      try { const u = new URL(website); if (!["http:", "https:"].includes(u.protocol)) throw new Error(); }
+      try { const u = new URL(website); if (!["http:", "https:"].includes(u.protocol)) throw new Error("Protocole non autorisé"); }
       catch { return res.status(400).json({ error: "URL du site invalide" }); }
     }
     if (photoUrl) {
-      try { const u = new URL(photoUrl); if (!["http:", "https:"].includes(u.protocol)) throw new Error(); }
+      try { const u = new URL(photoUrl); if (!["http:", "https:"].includes(u.protocol)) throw new Error("Protocole non autorisé"); }
       catch { return res.status(400).json({ error: "URL de la photo invalide" }); }
     }
 

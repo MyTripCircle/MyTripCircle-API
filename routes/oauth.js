@@ -80,7 +80,7 @@ router.post("/google", authLimiter, async (req, res) => {
     const refreshToken = await createRefreshToken(db, user._id);
     return res.json({ success: true, token, refreshToken, user: sanitizeUser(user) });
   } catch (e) {
-    logger.error("[auth/google] Erreur d'authentification");
+    logger.error("[auth/google] Erreur d'authentification", e.message);
     return res.status(500).json({ success: false, error: "Authentification Google échouée" });
   }
 });
@@ -97,7 +97,7 @@ router.post("/apple", authLimiter, async (req, res) => {
     try {
       payload = await verifyAppleToken(identityToken);
     } catch (e) {
-      logger.error("[auth/apple] Vérification du token échouée");
+      logger.error("[auth/apple] Vérification du token échouée", e.message);
       return res.status(401).json({ success: false, error: "Token Apple invalide" });
     }
 
@@ -105,9 +105,10 @@ router.post("/apple", authLimiter, async (req, res) => {
     if (!appleId) return res.status(401).json({ success: false, error: "Token Apple invalide" });
 
     const userEmail = email || tokenEmail || null;
+    const fallbackName = userEmail ? userEmail.split("@")[0] : "User";
     const userName = fullName
       ? `${fullName.givenName || ""} ${fullName.familyName || ""}`.trim()
-      : (userEmail ? userEmail.split("@")[0] : "User");
+      : fallbackName;
 
     let user = await db.collection("users").findOne({
       $or: [{ appleId }, ...(userEmail ? [{ email: userEmail }] : [])],
@@ -129,7 +130,7 @@ router.post("/apple", authLimiter, async (req, res) => {
     const refreshToken = await createRefreshToken(db, user._id);
     return res.json({ success: true, token, refreshToken, user: sanitizeUser(user) });
   } catch (e) {
-    logger.error("[auth/apple] Erreur d'authentification");
+    logger.error("[auth/apple] Erreur d'authentification", e.message);
     return res.status(500).json({ success: false, error: "Authentification Apple échouée" });
   }
 });

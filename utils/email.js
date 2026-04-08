@@ -176,8 +176,8 @@ async function sendFriendRequestFoundEmail(to, newUserName, lang = "fr") {
 
 async function sendTripInvitationEmail(
   to,
-  lang = "fr",
-  { inviterName, tripTitle, tripDestination, tripStartDate, tripEndDate, message, invitationLink }
+  { inviterName, tripTitle, tripDestination, tripStartDate, tripEndDate, message, invitationLink },
+  lang = "fr"
 ) {
   const locale = lang === "en" ? "en-US" : "fr-FR";
   const startFmt = new Date(tripStartDate).toLocaleDateString(locale);

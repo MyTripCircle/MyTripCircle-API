@@ -277,13 +277,12 @@ router.get("/lookup", requireAuth, async (req, res) => {
       email: found.email,
       avatar: found.avatar || null,
       stats: { totalTrips, countries, commonFriends },
-      relation: alreadyFriend
-        ? "friend"
-        : pendingSent
-        ? "pending_sent"
-        : pendingReceived
-        ? "pending_received"
-        : "none",
+      relation: (() => {
+        if (alreadyFriend) return "friend";
+        if (pendingSent) return "pending_sent";
+        if (pendingReceived) return "pending_received";
+        return "none";
+      })(),
     });
   } catch (e) {
 

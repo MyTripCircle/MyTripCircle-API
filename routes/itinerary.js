@@ -56,7 +56,7 @@ router.post("/generate", requireAuth, async (req, res) => {
 
     if (cached) return res.json({ cached: true, itinerary: cached.itinerary });
 
-    const cityClean = city.trim().replace(/["\\\n\r]/g, " ");
+    const cityClean = city.trim().replaceAll(/["\\\n\r]/g, " ");
     const prompt = `Génère un itinéraire de voyage pour la ville "${cityClean}" sur ${daysInt} jour(s).
 Réponds UNIQUEMENT avec un objet JSON valide respectant EXACTEMENT cette structure :
 {

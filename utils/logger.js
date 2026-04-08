@@ -2,7 +2,7 @@ const IS_PROD = process.env.NODE_ENV === "production";
 
 // Neutralise les vecteurs d'injection de logs (CRLF injection)
 function sanitize(...args) {
-  return args.map((a) => String(a).replace(/[\r\n]/g, " "));
+  return args.map((a) => String(a).replaceAll(/[\r\n]/g, " "));
 }
 
 const logger = {
