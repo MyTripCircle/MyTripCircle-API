@@ -63,8 +63,8 @@ function validateAddressCreate({ type, name, address, city, country, rating, web
   if (!city || typeof city !== "string" || city.trim().length === 0 || city.trim().length > 100) return "Ville requise (1-100 caractères)";
   if (!country || typeof country !== "string" || country.trim().length === 0 || country.trim().length > 100) return "Pays requis (1-100 caractères)";
   if (rating !== undefined && (typeof rating !== "number" || rating < 0 || rating > 5)) return "Note invalide (0-5)";
-  if (website && !isValidHttpUrl(website)) return "URL du site invalide";
-  if (photoUrl && !isValidHttpUrl(photoUrl)) return "URL de la photo invalide";
+  if (hasInvalidUrl(website)) return "URL du site invalide";
+  if (hasInvalidUrl(photoUrl)) return "URL de la photo invalide";
   return null;
 }
 
