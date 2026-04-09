@@ -51,6 +51,17 @@ async function findRecipientUser(db, recipientIdParam, recipientEmail, recipient
   return recipientPhone ? db.collection("users").findOne({ phone: recipientPhone }) : null;
 }
 
+async function validateRecipient(db, senderId, sender, recipientUser, recipientEmail, recipientPhone) {
+  if (recipientUser && String(recipientUser._id) === senderId) {
+    return { error: "Impossible de s'envoyer une demande à soi-même", status: 400 };
+  }
+  if (recipientUser) {
+    return checkRegisteredRecipient(db, senderId, sender, recipientUser);
+  }
+  const dupError = await checkUnregisteredDuplicate(db, senderId, recipientEmail, recipientPhone);
+  return dupError ? { error: dupError, status: 400 } : { ok: true };
+}
+
 async function checkUnregisteredDuplicate(db, senderId, recipientEmail, recipientPhone) {
   const query = { senderId, recipientId: null, status: "pending" };
   if (recipientEmail) query.recipientEmail = recipientEmail;
@@ -78,18 +89,9 @@ router.post("/request", requireAuth, async (req, res) => {
 
     const recipientUser = await findRecipientUser(db, recipientIdParam, recipientEmail, recipientPhone);
 
-    if (recipientUser && String(recipientUser._id) === senderId) {
-      return res.status(400).json({ error: "Impossible de s'envoyer une demande à soi-même" });
-    }
-
-    if (recipientUser) {
-      const check = await checkRegisteredRecipient(db, senderId, sender, recipientUser);
-      if (check.error) return res.status(check.status).json({ error: check.error });
-      if (check.autoAccepted) return res.json({ success: true, autoAccepted: true });
-    } else {
-      const dupError = await checkUnregisteredDuplicate(db, senderId, recipientEmail, recipientPhone);
-      if (dupError) return res.status(400).json({ error: dupError });
-    }
+    const check = await validateRecipient(db, senderId, sender, recipientUser, recipientEmail, recipientPhone);
+    if (check.error) return res.status(check.status).json({ error: check.error });
+    if (check.autoAccepted) return res.json({ success: true, autoAccepted: true });
 
     const friendRequest = {
       senderId,

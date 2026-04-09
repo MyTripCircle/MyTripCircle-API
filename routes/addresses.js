@@ -22,6 +22,24 @@ function isInvalidStringField(value, maxLen) {
   return typeof value !== "string" || value.trim().length === 0 || value.trim().length > maxLen;
 }
 
+function isInvalidRating(rating) {
+  return typeof rating !== "number" || rating < 0 || rating > 5;
+}
+
+function applyOptionalField(setData, unsetData, key, val) {
+  if (val !== undefined) {
+    if (val) setData[key] = trim(val);
+    else unsetData[key] = "";
+  }
+}
+
+function applyRatingUpdate(setData, unsetData, rating) {
+  if (rating !== undefined) {
+    if (typeof rating === "number") setData.rating = rating;
+    else unsetData.rating = "";
+  }
+}
+
 async function checkAddressEditAccess(db, id, userId) {
   const existing = await db.collection("addresses").findOne({ _id: new ObjectId(id) });
   if (!existing) return { status: 404, error: "Adresse introuvable" };
@@ -52,7 +70,7 @@ function validateAddressUpdate({ type, name, address, city, country, rating, web
   if (address !== undefined && isInvalidStringField(address, 500)) return "Adresse invalide (1-500 caractères)";
   if (city !== undefined && isInvalidStringField(city, 100)) return "Ville invalide (1-100 caractères)";
   if (country !== undefined && isInvalidStringField(country, 100)) return "Pays invalide (1-100 caractères)";
-  if (rating !== undefined && rating !== null && (typeof rating !== "number" || rating < 0 || rating > 5)) return "Note invalide (0-5)";
+  if (rating !== undefined && rating !== null && isInvalidRating(rating)) return "Note invalide (0-5)";
   if (website && !isValidHttpUrl(website)) return "URL du site invalide";
   if (photoUrl && !isValidHttpUrl(photoUrl)) return "URL de la photo invalide";
   return null;
@@ -203,16 +221,10 @@ router.put("/:id", requireAuth, async (req, res) => {
     if (country !== undefined) setData.country = trim(country);
 
     for (const [key, val] of [["phone", phone], ["website", website], ["notes", notes], ["photoUrl", photoUrl]]) {
-      if (val !== undefined) {
-        if (val) setData[key] = trim(val);
-        else unsetData[key] = "";
-      }
+      applyOptionalField(setData, unsetData, key, val);
     }
 
-    if (rating !== undefined) {
-      if (typeof rating === "number") setData.rating = rating;
-      else unsetData.rating = "";
-    }
+    applyRatingUpdate(setData, unsetData, rating);
 
     const updatePayload = {};
     if (Object.keys(setData).length > 0) updatePayload.$set = setData;
