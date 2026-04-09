@@ -37,6 +37,20 @@ async function checkRegisteredRecipient(db, senderId, sender, recipientUser) {
   return { ok: true };
 }
 
+function isSelf(senderId, sender, recipientIdParam, recipientEmail, recipientPhone) {
+  if (recipientIdParam === senderId) return true;
+  if (recipientEmail && sender?.email && recipientEmail.toLowerCase() === sender.email.toLowerCase()) return true;
+  if (recipientPhone && sender?.phone && recipientPhone === sender.phone) return true;
+  return false;
+}
+
+async function findRecipientUser(db, recipientIdParam, recipientEmail, recipientPhone) {
+  if (recipientIdParam) return db.collection("users").findOne({ _id: new ObjectId(recipientIdParam) });
+  const byEmail = recipientEmail && await db.collection("users").findOne({ email: recipientEmail });
+  if (byEmail) return byEmail;
+  return recipientPhone ? db.collection("users").findOne({ phone: recipientPhone }) : null;
+}
+
 async function checkUnregisteredDuplicate(db, senderId, recipientEmail, recipientPhone) {
   const query = { senderId, recipientId: null, status: "pending" };
   if (recipientEmail) query.recipientEmail = recipientEmail;
@@ -58,18 +72,11 @@ router.post("/request", requireAuth, async (req, res) => {
 
     const sender = await db.collection("users").findOne({ _id: new ObjectId(senderId) });
 
-    if (
-      recipientIdParam === senderId ||
-      (recipientEmail && sender?.email && recipientEmail.toLowerCase() === sender.email.toLowerCase()) ||
-      (recipientPhone && sender?.phone && recipientPhone === sender.phone)
-    ) {
+    if (isSelf(senderId, sender, recipientIdParam, recipientEmail, recipientPhone)) {
       return res.status(400).json({ error: "Impossible de s'envoyer une demande à soi-même" });
     }
 
-    let recipientUser = null;
-    if (recipientIdParam) recipientUser = await db.collection("users").findOne({ _id: new ObjectId(recipientIdParam) });
-    if (!recipientUser && recipientEmail) recipientUser = await db.collection("users").findOne({ email: recipientEmail });
-    if (!recipientUser && recipientPhone) recipientUser = await db.collection("users").findOne({ phone: recipientPhone });
+    const recipientUser = await findRecipientUser(db, recipientIdParam, recipientEmail, recipientPhone);
 
     if (recipientUser && String(recipientUser._id) === senderId) {
       return res.status(400).json({ error: "Impossible de s'envoyer une demande à soi-même" });

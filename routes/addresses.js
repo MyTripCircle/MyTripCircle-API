@@ -18,6 +18,22 @@ function isValidHttpUrl(url) {
   }
 }
 
+function isInvalidStringField(value, maxLen) {
+  return typeof value !== "string" || value.trim().length === 0 || value.trim().length > maxLen;
+}
+
+async function checkAddressEditAccess(db, id, userId) {
+  const existing = await db.collection("addresses").findOne({ _id: new ObjectId(id) });
+  if (!existing) return { status: 404, error: "Adresse introuvable" };
+  if (existing.userId === userId) return { existing };
+  if (existing.tripId) {
+    const trip = await db.collection("trips").findOne({ _id: new ObjectId(existing.tripId) });
+    const canEdit = trip && (trip.ownerId === userId || trip.collaborators?.some((c) => c.userId === userId && c.permissions.canEdit));
+    if (canEdit) return { existing };
+  }
+  return { status: 403, error: "Accès refusé" };
+}
+
 function validateAddressCreate({ type, name, address, city, country, rating, website, photoUrl }) {
   if (!type || !VALID_TYPES.includes(type)) return `Type invalide. Valeurs acceptées : ${VALID_TYPES.join(", ")}`;
   if (!name || typeof name !== "string" || name.trim().length === 0 || name.trim().length > 200) return "Nom requis (1-200 caractères)";
@@ -32,10 +48,10 @@ function validateAddressCreate({ type, name, address, city, country, rating, web
 
 function validateAddressUpdate({ type, name, address, city, country, rating, website, photoUrl }) {
   if (type !== undefined && !VALID_TYPES.includes(type)) return `Type invalide. Valeurs acceptées : ${VALID_TYPES.join(", ")}`;
-  if (name !== undefined && (typeof name !== "string" || name.trim().length === 0 || name.trim().length > 200)) return "Nom invalide (1-200 caractères)";
-  if (address !== undefined && (typeof address !== "string" || address.trim().length === 0 || address.trim().length > 500)) return "Adresse invalide (1-500 caractères)";
-  if (city !== undefined && (typeof city !== "string" || city.trim().length === 0 || city.trim().length > 100)) return "Ville invalide (1-100 caractères)";
-  if (country !== undefined && (typeof country !== "string" || country.trim().length === 0 || country.trim().length > 100)) return "Pays invalide (1-100 caractères)";
+  if (name !== undefined && isInvalidStringField(name, 200)) return "Nom invalide (1-200 caractères)";
+  if (address !== undefined && isInvalidStringField(address, 500)) return "Adresse invalide (1-500 caractères)";
+  if (city !== undefined && isInvalidStringField(city, 100)) return "Ville invalide (1-100 caractères)";
+  if (country !== undefined && isInvalidStringField(country, 100)) return "Pays invalide (1-100 caractères)";
   if (rating !== undefined && rating !== null && (typeof rating !== "number" || rating < 0 || rating > 5)) return "Note invalide (0-5)";
   if (website && !isValidHttpUrl(website)) return "URL du site invalide";
   if (photoUrl && !isValidHttpUrl(photoUrl)) return "URL de la photo invalide";
@@ -170,18 +186,8 @@ router.put("/:id", requireAuth, async (req, res) => {
     const userId = String(req.user._id);
     const { id } = req.params;
 
-    const existing = await db.collection("addresses").findOne({ _id: new ObjectId(id) });
-    if (!existing) return res.status(404).json({ error: "Adresse introuvable" });
-
-    const isOwner = existing.userId === userId;
-    if (!isOwner && existing.tripId) {
-      const trip = await db.collection("trips").findOne({ _id: new ObjectId(existing.tripId) });
-      const canEdit = trip && (trip.ownerId === userId || trip.collaborators?.some((c) => c.userId === userId && c.permissions.canEdit));
-      if (!canEdit) return res.status(403).json({ error: "Accès refusé" });
-    } else if (!isOwner) {
-      return res.status(403).json({ error: "Accès refusé" });
-    }
-
+    const access = await checkAddressEditAccess(db, id, userId);
+    if (access.error) return res.status(access.status).json({ error: access.error });
     const { type, name, address, city, country, phone, website, notes, rating, photoUrl } = req.body;
 
     const updateError = validateAddressUpdate(req.body);
