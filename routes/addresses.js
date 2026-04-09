@@ -26,6 +26,10 @@ function isInvalidRating(rating) {
   return typeof rating !== "number" || rating < 0 || rating > 5;
 }
 
+function hasInvalidUrl(url) {
+  return url && !isValidHttpUrl(url);
+}
+
 function applyOptionalField(setData, unsetData, key, val) {
   if (val !== undefined) {
     if (val) setData[key] = trim(val);
@@ -71,8 +75,8 @@ function validateAddressUpdate({ type, name, address, city, country, rating, web
   if (city !== undefined && isInvalidStringField(city, 100)) return "Ville invalide (1-100 caractères)";
   if (country !== undefined && isInvalidStringField(country, 100)) return "Pays invalide (1-100 caractères)";
   if (rating !== undefined && rating !== null && isInvalidRating(rating)) return "Note invalide (0-5)";
-  if (website && !isValidHttpUrl(website)) return "URL du site invalide";
-  if (photoUrl && !isValidHttpUrl(photoUrl)) return "URL de la photo invalide";
+  if (hasInvalidUrl(website)) return "URL du site invalide";
+  if (hasInvalidUrl(photoUrl)) return "URL de la photo invalide";
   return null;
 }
 
