@@ -44,7 +44,7 @@ async function getTripById(tripId, userId) {
 
 async function createTrip(data, userId) {
   const db = getDb();
-  const { title, description, destination, startDate, endDate, isPublic, visibility, tags, status } = data;
+  const { title, description, destination, startDate, endDate, isPublic, visibility, tags, status, coverImage } = data;
 
   if (!title || !destination || !startDate || !endDate) {
     return { error: "Champs requis manquants", status: 400 };
@@ -69,6 +69,7 @@ async function createTrip(data, userId) {
     title: title.trim(),
     description: description ? description.trim() : "",
     destination: destination.trim(),
+    coverImage: coverImage || null,
     startDate: start,
     endDate: end,
     ownerId: userId,
