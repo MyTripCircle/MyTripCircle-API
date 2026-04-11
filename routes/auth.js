@@ -235,8 +235,12 @@ router.post("/refresh", async (req, res) => {
     const stored = await db.collection("refreshTokens").findOne({ token: refreshToken });
     if (!stored) return res.status(401).json({ success: false, error: "Token invalide ou révoqué" });
 
+    // Rotation : supprime l'ancien refresh token et en crée un nouveau
+    await db.collection("refreshTokens").deleteOne({ token: refreshToken });
+    const newRefreshToken = await createRefreshToken(db, payload.id);
+
     const token = signAccessToken(payload.id);
-    return res.json({ success: true, token });
+    return res.json({ success: true, token, refreshToken: newRefreshToken });
   } catch {
     return res.status(401).json({ success: false, error: "Token invalide ou expiré" });
   }
