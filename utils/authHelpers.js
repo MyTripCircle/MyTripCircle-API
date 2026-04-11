@@ -30,7 +30,7 @@ function sanitizeUser(doc) {
 }
 
 function signAccessToken(userId) {
-  return jwt.sign({ id: String(userId) }, JWT_SECRET, { expiresIn: "15m" });
+  return jwt.sign({ id: String(userId) }, JWT_SECRET, { expiresIn: "1h" });
 }
 
 async function createRefreshToken(db, userId) {
