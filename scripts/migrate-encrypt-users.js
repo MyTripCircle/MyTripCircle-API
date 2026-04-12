@@ -92,7 +92,7 @@ async function migrateCollection(db, collectionName, emailField, phoneField) {
     }
 
     if (Object.keys(updates).length > 0) {
-      await col.updateOne({ _id: doc._id }, { $set: updates });
+      await col.updateOne({ _id: doc._id }, { $set: updates }, { bypassDocumentValidation: true });
       migrated++;
     } else {
       skipped++;
