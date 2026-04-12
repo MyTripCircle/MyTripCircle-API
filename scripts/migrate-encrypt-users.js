@@ -69,8 +69,6 @@ async function migrateCollection(db, collectionName, emailField, phoneField) {
 
     if (email && !isEncrypted(email)) {
       updates[emailField] = encrypt(email);
-      updates[`${emailField.replace("Email", "")}emailHash`.replace("invitee", "invitee")] =
-        collectionName === "users" ? hashField(email) : null;
       if (collectionName === "users") {
         updates.emailHash = hashField(email);
       } else if (emailField === "inviteeEmail") {
@@ -102,6 +100,23 @@ async function migrateCollection(db, collectionName, emailField, phoneField) {
   console.log(`[${collectionName}] ${migrated} migré(s), ${skipped} ignoré(s)`);
 }
 
+async function cleanup(db) {
+  // Supprime les champs parasites créés par une version bugguée du script
+  const spuriousFields = ["emailemailHash", "inviteeemailHash", "recipientemailHash"];
+  for (const field of spuriousFields) {
+    for (const col of ["users", "friends", "friendRequests", "invitations"]) {
+      const result = await db.collection(col).updateMany(
+        { [field]: { $exists: true } },
+        { $unset: { [field]: "" } },
+        { bypassDocumentValidation: true }
+      );
+      if (result.modifiedCount > 0) {
+        console.log(`[cleanup] ${col}: suppression du champ "${field}" sur ${result.modifiedCount} document(s)`);
+      }
+    }
+  }
+}
+
 async function run() {
   const client = new MongoClient(process.env.MONGODB_URI);
   await client.connect();
@@ -113,6 +128,9 @@ async function run() {
   await migrateCollection(db, "friends", "email", "phone");
   await migrateCollection(db, "friendRequests", "recipientEmail", "recipientPhone");
   await migrateCollection(db, "invitations", "inviteeEmail", "inviteePhone");
+
+  console.log("\nNettoyage des champs parasites...");
+  await cleanup(db);
 
   console.log("\nMigration terminée.");
   await client.close();
