@@ -34,10 +34,17 @@ function signAccessToken(userId) {
   return jwt.sign({ id: String(userId) }, JWT_SECRET, { expiresIn: "15m" });
 }
 
+// Hash SHA-256 d'un refresh token avant stockage en base.
+// Le token en clair n'est jamais persisté : seul le hash est stocké,
+// ce qui limite l'exploitabilité en cas de compromission de la base.
+function hashToken(token) {
+  return crypto.createHash("sha256").update(token).digest("hex");
+}
+
 async function createRefreshToken(db, userId) {
   const token = jwt.sign({ id: String(userId) }, REFRESH_SECRET, { expiresIn: "7d" });
   await db.collection("refreshTokens").insertOne({
-    token,
+    token: hashToken(token),
     userId: String(userId),
     createdAt: new Date(),
     expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
@@ -56,5 +63,6 @@ module.exports = {
   sanitizeUser,
   signAccessToken,
   createRefreshToken,
+  hashToken,
   generateOtp,
 };

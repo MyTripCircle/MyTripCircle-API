@@ -2,6 +2,7 @@ const express = require("express");
 const { ObjectId } = require("mongodb");
 const { getDb } = require("../db");
 const { requireAuth } = require("../middleware/auth");
+const { searchLimiter } = require("../middleware/rateLimiter");
 const logger = require("../utils/logger");
 const { sendFriendRequestFoundEmail } = require("../utils/email");
 const { hashField, decrypt } = require("../utils/crypto");
@@ -50,7 +51,7 @@ async function linkPendingFriendRequests(userId, userEmail, userPhone) {
 }
 
 // GET /friends/suggestions
-router.get("/suggestions", requireAuth, async (req, res) => {
+router.get("/suggestions", requireAuth, searchLimiter, async (req, res) => {
   try {
     const db = getDb();
     const userId = String(req.user._id);

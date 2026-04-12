@@ -16,6 +16,7 @@ const {
   sanitizeUser,
   signAccessToken,
   createRefreshToken,
+  hashToken,
   generateOtp,
 } = require("../utils/authHelpers");
 const { hashField, encryptUserFields, decrypt } = require("../utils/crypto");
@@ -235,11 +236,11 @@ router.post("/refresh", async (req, res) => {
     const payload = jwt.verify(refreshToken, REFRESH_SECRET);
     const db = getDb();
 
-    const stored = await db.collection("refreshTokens").findOne({ token: refreshToken });
+    const stored = await db.collection("refreshTokens").findOne({ token: hashToken(refreshToken) });
     if (!stored) return res.status(401).json({ success: false, error: "Token invalide ou révoqué" });
 
     // Rotation : supprime l'ancien refresh token et en crée un nouveau
-    await db.collection("refreshTokens").deleteOne({ token: refreshToken });
+    await db.collection("refreshTokens").deleteOne({ token: hashToken(refreshToken) });
     const newRefreshToken = await createRefreshToken(db, payload.id);
 
     const token = signAccessToken(payload.id);
@@ -255,7 +256,7 @@ router.post("/logout", async (req, res) => {
   if (refreshToken) {
     try {
       const db = getDb();
-      await db.collection("refreshTokens").deleteOne({ token: refreshToken });
+      await db.collection("refreshTokens").deleteOne({ token: hashToken(refreshToken) });
     } catch {
       // Silencieux : on déconnecte quoi qu'il arrive
     }

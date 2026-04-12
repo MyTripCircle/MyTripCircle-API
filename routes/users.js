@@ -4,6 +4,7 @@ const logger = require("../utils/logger");
 const { ObjectId } = require("mongodb");
 const { getDb } = require("../db");
 const { requireAuth } = require("../middleware/auth");
+const { searchLimiter } = require("../middleware/rateLimiter");
 const { sanitizeUser, isStrongPassword, trimIfString } = require("../utils/authHelpers");
 const { linkPendingFriendRequests } = require("./friends");
 const { isValidEmail, isValidPhone } = require("../utils/validators");
@@ -283,7 +284,7 @@ router.post("/me/cancel-deletion", requireAuth, async (req, res) => {
 });
 
 // POST /users/batch
-router.post("/batch", requireAuth, async (req, res) => {
+router.post("/batch", requireAuth, searchLimiter, async (req, res) => {
   try {
     const db = getDb();
     const { ids } = req.body;
@@ -313,7 +314,7 @@ router.post("/batch", requireAuth, async (req, res) => {
 });
 
 // GET /users/lookup
-router.get("/lookup", requireAuth, async (req, res) => {
+router.get("/lookup", requireAuth, searchLimiter, async (req, res) => {
   try {
     const db = getDb();
     const userId = String(req.user._id);
