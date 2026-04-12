@@ -18,6 +18,7 @@ async function purgeDeletedAccounts() {
       const userIdStr = String(user._id);
       try {
         await Promise.all([
+          // Données appartenant à l'utilisateur
           db.collection("trips").deleteMany({ ownerId: userIdStr }),
           db.collection("bookings").deleteMany({ userId: userIdStr }),
           db.collection("addresses").deleteMany({ userId: userIdStr }),
@@ -32,7 +33,19 @@ async function purgeDeletedAccounts() {
           }),
           db.collection("refreshTokens").deleteMany({ userId: userIdStr }),
           db.collection("itinerary_usage").deleteMany({ userId: userIdStr }),
+          // RGPD — preuves de consentement supprimées avec le compte
+          db.collection("user_consents").deleteMany({ userId: userIdStr }),
+          // Liens d'invitation amis créés par l'utilisateur
+          db.collection("friendInviteLinks").deleteMany({ userId: userIdStr }),
         ]);
+
+        // RGPD Art. 17 — Retirer l'utilisateur des voyages dont il est collaborateur
+        // (les voyages eux-mêmes restent car ils appartiennent aux autres propriétaires)
+        await db.collection("trips").updateMany(
+          { "collaborators.userId": userIdStr },
+          { $pull: { collaborators: { userId: userIdStr } } }
+        );
+
         await db.collection("users").deleteOne({ _id: user._id });
         logger.info(`[cleanup] Compte ${userIdStr} supprimé définitivement (délai 7j écoulé)`);
       } catch (err) {

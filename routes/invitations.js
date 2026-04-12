@@ -70,7 +70,7 @@ router.post("/", requireAuth, async (req, res) => {
       const inviter = await db.collection("users").findOne({ _id: new ObjectId(inviterId) });
       const inviteeUser = await db.collection("users").findOne({ emailHash: hashField(inviteeEmail) });
       await sendTripInvitationEmail(inviteeEmail, {
-        inviterName: inviter?.name || "Quelqu'un",
+        inviterName: (inviter?.name ? decrypt(inviter.name) : null) || "Quelqu'un",
         tripTitle: trip.title,
         tripDestination: trip.destination,
         tripStartDate: trip.startDate,
@@ -114,7 +114,7 @@ router.get("/user/:email", requireAuth, async (req, res) => {
         return {
           ...inv,
           trip: trip ? { _id: trip._id, title: trip.title, destination: trip.destination, startDate: trip.startDate, endDate: trip.endDate } : null,
-          inviter: inviter ? { _id: inviter._id, name: inviter.name, email: inviter.email ? decrypt(inviter.email) : null, avatar: inviter.avatar } : null,
+          inviter: inviter ? { _id: inviter._id, name: inviter.name ? decrypt(inviter.name) : null, email: inviter.email ? decrypt(inviter.email) : null, avatar: inviter.avatar } : null,
         };
       })
     );
@@ -141,7 +141,7 @@ router.get("/token/:token", async (req, res) => {
     return res.json({
       ...invitation,
       trip: trip ? { _id: trip._id, title: trip.title, destination: trip.destination, startDate: trip.startDate, endDate: trip.endDate, coverImage: trip.coverImage, description: trip.description } : null,
-      inviter: inviter ? { _id: inviter._id, name: inviter.name, email: inviter.email ? decrypt(inviter.email) : null, avatar: inviter.avatar } : null,
+      inviter: inviter ? { _id: inviter._id, name: inviter.name ? decrypt(inviter.name) : null, email: inviter.email ? decrypt(inviter.email) : null, avatar: inviter.avatar } : null,
     });
   } catch (e) {
 

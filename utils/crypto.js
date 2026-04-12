@@ -41,9 +41,13 @@ function hashField(value) {
   return crypto.createHmac("sha256", hmacKey).update(value.toLowerCase()).digest("hex");
 }
 
-// Chiffre email/phone d'un objet avant insertOne/updateOne, ajoute les hashes
+// Chiffre name/email/phone d'un objet avant insertOne/updateOne, ajoute les hashes
 function encryptUserFields(data) {
   const result = { ...data };
+  // RGPD Art. 32 — Le nom est une donnée personnelle directement identifiante
+  if (result.name != null) {
+    result.name = encrypt(result.name);
+  }
   if (result.email != null) {
     result.emailHash = hashField(result.email);
     result.email = encrypt(result.email);
@@ -55,14 +59,47 @@ function encryptUserFields(data) {
   return result;
 }
 
-// Déchiffre email/phone d'un document brut issu de MongoDB
+// Déchiffre name/email/phone d'un document brut issu de MongoDB
 function decryptUserFields(doc) {
   if (!doc) return doc;
   return {
     ...doc,
+    name: doc.name ? decrypt(doc.name) : doc.name,
     email: doc.email ? decrypt(doc.email) : doc.email,
     phone: doc.phone ? decrypt(doc.phone) : doc.phone,
   };
 }
 
-module.exports = { encrypt, decrypt, hashField, encryptUserFields, decryptUserFields };
+// Champs d'adresse sensibles à chiffrer (RGPD — localisation et données personnelles)
+const ADDRESS_SENSITIVE_FIELDS = ["name", "address"];
+
+function encryptAddressFields(data) {
+  const result = { ...data };
+  for (const field of ADDRESS_SENSITIVE_FIELDS) {
+    if (result[field] != null) {
+      result[field] = encrypt(result[field]);
+    }
+  }
+  return result;
+}
+
+function decryptAddressFields(doc) {
+  if (!doc) return doc;
+  const result = { ...doc };
+  for (const field of ADDRESS_SENSITIVE_FIELDS) {
+    if (result[field]) {
+      result[field] = decrypt(result[field]);
+    }
+  }
+  return result;
+}
+
+module.exports = {
+  encrypt,
+  decrypt,
+  hashField,
+  encryptUserFields,
+  decryptUserFields,
+  encryptAddressFields,
+  decryptAddressFields,
+};

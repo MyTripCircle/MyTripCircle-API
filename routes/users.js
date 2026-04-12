@@ -9,6 +9,8 @@ const { sanitizeUser, isStrongPassword, trimIfString } = require("../utils/authH
 const { linkPendingFriendRequests } = require("./friends");
 const { isValidEmail, isValidPhone } = require("../utils/validators");
 const { hashField, encrypt, decrypt, decryptUserFields } = require("../utils/crypto");
+
+const CONSENT_VERSION = "1.0";
 const { sendDataExportEmail } = require("../utils/email");
 
 const router = express.Router();
@@ -37,7 +39,7 @@ router.put("/me", requireAuth, async (req, res) => {
     if (existing) return res.status(409).json({ success: false, error: "Email déjà utilisé" });
 
     const updateData = {
-      name,
+      name: encrypt(name),
       email: encrypt(email),
       emailHash: hashField(email),
       updatedAt: new Date(),
@@ -301,7 +303,7 @@ router.post("/batch", requireAuth, searchLimiter, async (req, res) => {
     return res.json(users.map((u) => ({
       _id: u._id,
       id: String(u._id),
-      name: u.name,
+      name: u.name ? decrypt(u.name) : null,
       email: u.email ? decrypt(u.email) : null,
       avatar: u.avatar,
     })));
@@ -385,13 +387,14 @@ router.get("/me/export", requireAuth, async (req, res) => {
       db.collection("friends").find({ userId: userIdStr }).toArray(),
     ]);
 
+    const decryptedUser = decryptUserFields(user);
     const exported = {
       exportedAt: new Date().toISOString(),
       profile: {
         id: userIdStr,
-        name: user.name,
-        email: user.email,
-        phone: user.phone || null,
+        name: decryptedUser.name,
+        email: decryptedUser.email,
+        phone: decryptedUser.phone || null,
         language: user.language || "fr",
         createdAt: user.createdAt,
       },
@@ -428,6 +431,35 @@ router.get("/me/export", requireAuth, async (req, res) => {
   } catch (e) {
     logger.error("[users]", e.message);
     return res.status(500).json({ error: "Erreur interne du serveur" });
+  }
+});
+
+// POST /users/consent — RGPD Art. 7 : enregistre le consentement côté serveur avec preuve horodatée
+router.post("/consent", requireAuth, async (req, res) => {
+  try {
+    const db = getDb();
+    const userId = String(req.user._id);
+    const { location, notifications, version } = req.body;
+
+    await db.collection("user_consents").insertOne({
+      userId,
+      consents: {
+        data: true,
+        location: location === true,
+        notifications: notifications === true,
+      },
+      version: typeof version === "string" ? version : CONSENT_VERSION,
+      source: "mobile",
+      acceptedAt: new Date(),
+      ip: req.ip,
+      userAgent: req.headers["user-agent"] || null,
+      createdAt: new Date(),
+    });
+
+    return res.json({ success: true });
+  } catch (e) {
+    logger.error("[users] consent", e.message);
+    return res.status(500).json({ success: false, error: "Erreur interne du serveur" });
   }
 });
 

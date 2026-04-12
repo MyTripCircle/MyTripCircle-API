@@ -1,5 +1,6 @@
 const { ObjectId } = require("mongodb");
 const { getDb } = require("../db");
+const { encryptAddressFields, decryptAddressFields } = require("../utils/crypto");
 
 const VALID_TYPES = ["hotel", "restaurant", "activity", "transport", "other"];
 const trim = (v) => (typeof v === "string" ? v.trim() : v);
@@ -89,9 +90,10 @@ async function getAddressesForUser(userId) {
   }).project({ _id: 1 }).toArray();
   const tripIds = userTrips.map((t) => String(t._id));
 
-  return db.collection("addresses").find({
+  const items = await db.collection("addresses").find({
     $or: [{ tripId: { $in: tripIds } }, { userId }],
   }).toArray();
+  return items.map(decryptAddressFields);
 }
 
 async function getAddressesByTripId(tripId, userId) {
@@ -113,7 +115,7 @@ async function getAddressesByTripId(tripId, userId) {
   }
 
   const items = await db.collection("addresses").find({ tripId }).toArray();
-  return { items };
+  return { items: items.map(decryptAddressFields) };
 }
 
 async function getAddressById(id, userId) {
@@ -131,7 +133,7 @@ async function getAddressById(id, userId) {
   } else if (!isOwner) {
     return { error: "Accès refusé", status: 403 };
   }
-  return { item };
+  return { item: decryptAddressFields(item) };
 }
 
 async function createAddress(data, userId) {
@@ -140,7 +142,7 @@ async function createAddress(data, userId) {
   if (validationError) return { error: validationError, status: 400 };
 
   const { type, name, address, city, country, phone, website, notes, rating, tripId, photoUrl } = data;
-  const doc = {
+  const doc = encryptAddressFields({
     type,
     name:    trim(name),
     address: trim(address),
@@ -155,11 +157,11 @@ async function createAddress(data, userId) {
     userId,
     createdAt: new Date(),
     updatedAt: new Date(),
-  };
+  });
 
   const result = await db.collection("addresses").insertOne(doc);
   doc._id = result.insertedId;
-  return { item: doc };
+  return { item: decryptAddressFields(doc) };
 }
 
 async function updateAddress(id, data, userId) {
@@ -175,8 +177,9 @@ async function updateAddress(id, data, userId) {
   const unsetData = {};
 
   if (type    !== undefined) setData.type    = type;
-  if (name    !== undefined) setData.name    = trim(name);
-  if (address !== undefined) setData.address = trim(address);
+  // RGPD Art. 32 — chiffrement des champs sensibles avant persistence
+  if (name    !== undefined) setData.name    = encryptAddressFields({ name: trim(name) }).name;
+  if (address !== undefined) setData.address = encryptAddressFields({ address: trim(address) }).address;
   if (city    !== undefined) setData.city    = trim(city);
   if (country !== undefined) setData.country = trim(country);
 
@@ -191,7 +194,7 @@ async function updateAddress(id, data, userId) {
 
   await db.collection("addresses").updateOne({ _id: new ObjectId(id) }, updatePayload);
   const updated = await db.collection("addresses").findOne({ _id: new ObjectId(id) });
-  return { item: updated };
+  return { item: decryptAddressFields(updated) };
 }
 
 async function deleteAddress(id, userId) {

@@ -53,6 +53,28 @@ async function _ensureIndexes() {
   } catch (err) {
     logger.error("[db] Erreur lors de la création des index itinerary_usage :", err.message);
   }
+
+  // RGPD Art. 5(f) — Audit logs : TTL 1 an + index userId pour audit ciblé
+  try {
+    await db.collection("auditLogs").createIndex(
+      { createdAt: 1 },
+      { expireAfterSeconds: 365 * 24 * 60 * 60 }
+    );
+    await db.collection("auditLogs").createIndex({ userId: 1 });
+  } catch (err) {
+    logger.error("[db] Erreur lors de la création des index auditLogs :", err.message);
+  }
+
+  // RGPD Art. 7 — Consentements : index userId pour lookup rapide + TTL 5 ans
+  try {
+    await db.collection("user_consents").createIndex({ userId: 1 });
+    await db.collection("user_consents").createIndex(
+      { createdAt: 1 },
+      { expireAfterSeconds: 5 * 365 * 24 * 60 * 60 }
+    );
+  } catch (err) {
+    logger.error("[db] Erreur lors de la création des index user_consents :", err.message);
+  }
 }
 
 async function _updateUsersValidator() {

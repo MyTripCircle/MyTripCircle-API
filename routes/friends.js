@@ -37,7 +37,7 @@ async function linkPendingFriendRequests(userId, userEmail, userPhone) {
       if (sender) {
         await sendFriendRequestFoundEmail(
           sender.email ? decrypt(sender.email) : null,
-          newUser?.name || userEmail,
+          (newUser?.name ? decrypt(newUser.name) : null) || userEmail,
           sender.language || "fr"
         );
       }
@@ -93,7 +93,7 @@ router.get("/suggestions", requireAuth, searchLimiter, async (req, res) => {
 
     const suggestions = users.map((u) => ({
       id: String(u._id),
-      name: u.name || "Utilisateur",
+      name: u.name ? decrypt(u.name) : "Utilisateur",
       email: u.email ? decrypt(u.email) : null,
       avatar: u.avatar || null,
       commonFriends: commonCount[String(u._id)] || 0,
@@ -130,7 +130,7 @@ router.get("/", requireAuth, async (req, res) => {
       id: f._id.toString(),
       userId: f.userId,
       friendId: f.friendId,
-      name: f.name,
+      name: f.name ? decrypt(f.name) : null,
       email: f.email ? decrypt(f.email) : f.email,
       phone: f.phone ? decrypt(f.phone) : f.phone,
       avatar: avatarMap.get(f.friendId) ?? f.avatar ?? null,
@@ -176,7 +176,7 @@ router.get("/:friendId/profile", requireAuth, async (req, res) => {
     if (!friendUser.isPublicProfile) {
       return res.json({
         id: String(friendUser._id),
-        name: friendUser.name,
+        name: friendUser.name ? decrypt(friendUser.name) : null,
         avatar: friendUser.avatar || null,
         isFriend,
         friendSince: friendship?.createdAt || null,
@@ -228,8 +228,8 @@ router.get("/:friendId/profile", requireAuth, async (req, res) => {
 
     return res.json({
       id: String(friendUser._id),
-      name: friendUser.name,
-      email: friendUser.email,
+      name: friendUser.name ? decrypt(friendUser.name) : null,
+      email: friendUser.email ? decrypt(friendUser.email) : null,
       avatar: friendUser.avatar || null,
       isFriend,
       friendSince: friendship?.createdAt || null,

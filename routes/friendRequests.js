@@ -25,10 +25,11 @@ async function checkRegisteredRecipient(db, senderId, sender, recipientUser) {
       { _id: incomingRequest._id },
       { $set: { status: "accepted", respondedAt: now } }
     );
-    // recipientUser et sender sont des docs bruts DB (email chiffré) — on copie directement
+    // recipientUser est un doc brut DB (chiffré) — on copie directement
+    // sender est déchiffré par decryptUserFields — on re-chiffre avant stockage
     await db.collection("friends").insertMany([
       { userId: senderId, friendId: recipientId, name: recipientUser.name, email: recipientUser.email, phone: recipientUser.phone, createdAt: now },
-      { userId: recipientId, friendId: senderId, name: sender?.name || "Quelqu'un", email: sender?.email, phone: sender?.phone, createdAt: now },
+      { userId: recipientId, friendId: senderId, name: encrypt(sender?.name || "Quelqu'un"), email: sender?.email ? encrypt(sender.email) : null, phone: sender?.phone ? encrypt(sender.phone) : null, createdAt: now },
     ]);
     return { autoAccepted: true };
   }
@@ -172,7 +173,7 @@ router.get("/requests", requireAuth, async (req, res) => {
         const recipientUsers = await db.collection("users").find({
           _id: { $in: recipientIdList.map((id) => { try { return new ObjectId(id); } catch { return null; } }).filter(Boolean) },
         }).project({ _id: 1, name: 1 }).toArray();
-        recipientUsers.forEach((u) => { recipientNameMap[String(u._id)] = u.name || null; });
+        recipientUsers.forEach((u) => { recipientNameMap[String(u._id)] = u.name ? decrypt(u.name) : null; });
       }
     }
 
@@ -228,10 +229,10 @@ router.put("/requests/:requestId", requireAuth, async (req, res) => {
       const now = new Date();
       const sender = await db.collection("users").findOne({ _id: new ObjectId(request.senderId) });
       // req.user est déchiffré par le middleware — on re-chiffre pour stocker dans friends
-      // sender est un doc brut avec email déjà chiffré — on copie directement
+      // sender est un doc brut avec name/email/phone déjà chiffrés — on copie directement
       await db.collection("friends").insertMany([
-        { userId: request.senderId, friendId: request.recipientId, name: req.user.name, email: encrypt(req.user.email), phone: req.user.phone ? encrypt(req.user.phone) : null, createdAt: now },
-        { userId: request.recipientId, friendId: request.senderId, name: sender?.name || request.senderName, email: sender?.email, phone: sender?.phone, createdAt: now },
+        { userId: request.senderId, friendId: request.recipientId, name: encrypt(req.user.name), email: encrypt(req.user.email), phone: req.user.phone ? encrypt(req.user.phone) : null, createdAt: now },
+        { userId: request.recipientId, friendId: request.senderId, name: sender?.name || (request.senderName ? encrypt(request.senderName) : null), email: sender?.email, phone: sender?.phone, createdAt: now },
       ]);
     }
 

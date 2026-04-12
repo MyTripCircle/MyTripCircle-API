@@ -19,7 +19,7 @@ function sanitizeUser(doc) {
   if (!doc) return null;
   return {
     id: String(doc._id),
-    name: doc.name,
+    name: doc.name ? decrypt(doc.name) : doc.name,
     email: doc.email ? decrypt(doc.email) : doc.email,
     phone: doc.phone ? decrypt(doc.phone) : doc.phone,
     avatar: doc.avatar,

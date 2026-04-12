@@ -5,6 +5,7 @@ const { ObjectId } = require("mongodb");
 const { getDb } = require("../db");
 const { requireAuth } = require("../middleware/auth");
 const { sendFriendJoinedEmail } = require("../utils/email");
+const { decrypt, encrypt } = require("../utils/crypto");
 
 const router = express.Router();
 
@@ -41,7 +42,7 @@ router.get("/invite-link/:token", async (req, res) => {
     const owner = await db.collection("users").findOne({ _id: new ObjectId(link.userId) });
     if (!owner) return res.status(404).json({ error: "Utilisateur introuvable" });
 
-    return res.json({ userId: String(owner._id), name: owner.name, avatar: owner.avatar || null });
+    return res.json({ userId: String(owner._id), name: owner.name ? decrypt(owner.name) : null, avatar: owner.avatar || null });
   } catch (e) {
 
     logger.error("[friendInvites]", e.message);
@@ -98,12 +99,14 @@ router.post("/invite-link/:token/accept", requireAuth, async (req, res) => {
       });
     }
 
+    // owner est un doc brut DB (name/email/phone chiffrés) — on copie directement
+    // currentUser est req.user (déchiffré par le middleware) — on re-chiffre avant stockage
     await db.collection("friends").insertMany([
       { userId: currentUserId, friendId: ownerId, name: owner.name, email: owner.email, phone: owner.phone || null, avatar: owner.avatar || null, createdAt: now },
-      { userId: ownerId, friendId: currentUserId, name: currentUser.name, email: currentUser.email, phone: currentUser.phone || null, avatar: currentUser.avatar || null, createdAt: now },
+      { userId: ownerId, friendId: currentUserId, name: encrypt(currentUser.name), email: encrypt(currentUser.email), phone: currentUser.phone ? encrypt(currentUser.phone) : null, avatar: currentUser.avatar || null, createdAt: now },
     ]);
 
-    await sendFriendJoinedEmail(owner.email, currentUser.name);
+    await sendFriendJoinedEmail(owner.email ? decrypt(owner.email) : null, currentUser.name);
 
     return res.json({ success: true });
   } catch (e) {
