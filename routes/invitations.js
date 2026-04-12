@@ -6,6 +6,7 @@ const { getDb } = require("../db");
 const { requireAuth } = require("../middleware/auth");
 const { sendTripInvitationEmail } = require("../utils/email");
 const { API_BASE_URL } = require("../config");
+const { hashField, encrypt, decrypt, decryptUserFields } = require("../utils/crypto");
 
 const router = express.Router();
 
@@ -41,8 +42,8 @@ router.post("/", requireAuth, async (req, res) => {
     }
 
     const inviteQuery = { tripId, status: "pending" };
-    if (inviteeEmail) inviteQuery.inviteeEmail = inviteeEmail;
-    if (inviteePhone) inviteQuery.inviteePhone = inviteePhone;
+    if (inviteeEmail) inviteQuery.inviteeEmailHash = hashField(inviteeEmail);
+    if (inviteePhone) inviteQuery.inviteePhoneHash = hashField(inviteePhone);
 
     const existingInvitation = await db.collection("invitations").findOne(inviteQuery);
     if (existingInvitation) return res.status(400).json({ error: "Invitation déjà en attente" });
@@ -51,8 +52,8 @@ router.post("/", requireAuth, async (req, res) => {
     const invitation = {
       tripId,
       inviterId,
-      ...(inviteeEmail && { inviteeEmail }),
-      ...(inviteePhone && { inviteePhone }),
+      ...(inviteeEmail && { inviteeEmail: encrypt(inviteeEmail), inviteeEmailHash: hashField(inviteeEmail) }),
+      ...(inviteePhone && { inviteePhone: encrypt(inviteePhone), inviteePhoneHash: hashField(inviteePhone) }),
       status: "pending",
       token,
       expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
@@ -67,7 +68,7 @@ router.post("/", requireAuth, async (req, res) => {
 
     if (inviteeEmail) {
       const inviter = await db.collection("users").findOne({ _id: new ObjectId(inviterId) });
-      const inviteeUser = await db.collection("users").findOne({ email: inviteeEmail });
+      const inviteeUser = await db.collection("users").findOne({ emailHash: hashField(inviteeEmail) });
       await sendTripInvitationEmail(inviteeEmail, {
         inviterName: inviter?.name || "Quelqu'un",
         tripTitle: trip.title,
@@ -96,11 +97,12 @@ router.get("/user/:email", requireAuth, async (req, res) => {
     const { status } = req.query;
 
     // Vérification : seul l'utilisateur connecté peut voir ses propres invitations
+    // req.user.email est déchiffré par le middleware
     if (req.user.email !== email.toLowerCase()) {
       return res.status(403).json({ error: "Accès refusé" });
     }
 
-    const query = { inviteeEmail: email };
+    const query = { inviteeEmailHash: hashField(email) };
     if (status) query.status = status;
 
     const invitations = await db.collection("invitations").find(query).toArray();
@@ -112,7 +114,7 @@ router.get("/user/:email", requireAuth, async (req, res) => {
         return {
           ...inv,
           trip: trip ? { _id: trip._id, title: trip.title, destination: trip.destination, startDate: trip.startDate, endDate: trip.endDate } : null,
-          inviter: inviter ? { _id: inviter._id, name: inviter.name, email: inviter.email, avatar: inviter.avatar } : null,
+          inviter: inviter ? { _id: inviter._id, name: inviter.name, email: inviter.email ? decrypt(inviter.email) : null, avatar: inviter.avatar } : null,
         };
       })
     );
@@ -139,7 +141,7 @@ router.get("/token/:token", async (req, res) => {
     return res.json({
       ...invitation,
       trip: trip ? { _id: trip._id, title: trip.title, destination: trip.destination, startDate: trip.startDate, endDate: trip.endDate, coverImage: trip.coverImage, description: trip.description } : null,
-      inviter: inviter ? { _id: inviter._id, name: inviter.name, email: inviter.email, avatar: inviter.avatar } : null,
+      inviter: inviter ? { _id: inviter._id, name: inviter.name, email: inviter.email ? decrypt(inviter.email) : null, avatar: inviter.avatar } : null,
     });
   } catch (e) {
 

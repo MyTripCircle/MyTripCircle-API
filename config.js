@@ -1,5 +1,5 @@
 // Validation des variables d'environnement au démarrage
-const REQUIRED_VARS = ["MONGODB_URI", "JWT_SECRET", "REFRESH_SECRET"];
+const REQUIRED_VARS = ["MONGODB_URI", "JWT_SECRET", "REFRESH_SECRET", "ENCRYPTION_KEY", "HMAC_KEY"];
 
 function validateEnv() {
   const missing = REQUIRED_VARS.filter((key) => !process.env[key]);

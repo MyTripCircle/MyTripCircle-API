@@ -18,6 +18,7 @@ const {
   createRefreshToken,
   generateOtp,
 } = require("../utils/authHelpers");
+const { hashField, encryptUserFields, decrypt } = require("../utils/crypto");
 
 const router = express.Router();
 
@@ -46,13 +47,13 @@ router.post("/register", authLimiter, async (req, res) => {
       if (!isValidPhone(phone)) {
         return res.status(400).json({ success: false, error: "Numéro de téléphone invalide", field: "phone" });
       }
-      const existingPhone = await db.collection("users").findOne({ phone, verified: true });
+      const existingPhone = await db.collection("users").findOne({ phoneHash: hashField(phone), verified: true });
       if (existingPhone) {
         return res.status(409).json({ success: false, error: "Numéro de téléphone déjà utilisé", field: "phone" });
       }
     }
 
-    const existing = await db.collection("users").findOne({ email });
+    const existing = await db.collection("users").findOne({ emailHash: hashField(email) });
     if (existing) {
       if (!existing.verified) {
         const otp = generateOtp();
@@ -74,17 +75,19 @@ router.post("/register", authLimiter, async (req, res) => {
     const passwordHash = await bcrypt.hash(password, 10);
     const otp = generateOtp();
 
-    const result = await db.collection("users").insertOne({
-      name,
-      email,
-      password: passwordHash,
-      phone,
-      otp,
-      otpExpiresAt: new Date(Date.now() + OTP_EXPIRY_MS),
-      verified: false,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    });
+    const result = await db.collection("users").insertOne(
+      encryptUserFields({
+        name,
+        email,
+        password: passwordHash,
+        phone,
+        otp,
+        otpExpiresAt: new Date(Date.now() + OTP_EXPIRY_MS),
+        verified: false,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      })
+    );
 
     await sendOtpEmail(email, otp);
     return res.status(201).json({ success: true, userId: String(result.insertedId), message: "Code envoyé par email" });
@@ -111,7 +114,7 @@ router.post("/login", authLimiter, async (req, res) => {
       return res.status(401).json({ success: false, error: "Identifiants invalides", field: "password" });
     }
 
-    const user = await db.collection("users").findOne({ email });
+    const user = await db.collection("users").findOne({ emailHash: hashField(email) });
     if (!user) {
       return res.status(401).json({ success: false, error: "Identifiants invalides", field: "password" });
     }
@@ -135,7 +138,7 @@ router.post("/login", authLimiter, async (req, res) => {
         { _id: user._id },
         { $set: { otp: newOtp, otpExpiresAt: new Date(Date.now() + OTP_EXPIRY_MS) } }
       );
-      await sendOtpEmail(user.email, newOtp);
+      await sendOtpEmail(decrypt(user.email), newOtp);
       return res.status(403).json({
         success: false,
         error: "Code expiré. Un nouveau code a été envoyé.",
@@ -181,7 +184,7 @@ router.post("/verify-otp", authLimiter, async (req, res) => {
       { $set: { verified: true, updatedAt: new Date() }, $unset: { otp: "", otpExpiresAt: "" } }
     );
 
-    await linkPendingFriendRequests(userId, user.email, user.phone);
+    await linkPendingFriendRequests(userId, decrypt(user.email), user.phone ? decrypt(user.phone) : null);
 
     const updatedUser = await db.collection("users").findOne({ _id: new ObjectId(userId) });
     const accessToken = signAccessToken(userId);
@@ -213,7 +216,7 @@ router.post("/resend-otp", authLimiter, async (req, res) => {
       { $set: { otp, otpExpiresAt: new Date(Date.now() + OTP_EXPIRY_MS), updatedAt: new Date() } }
     );
 
-    await sendOtpEmail(user.email, otp);
+    await sendOtpEmail(decrypt(user.email), otp);
     return res.json({ success: true, message: "Code renvoyé" });
   } catch (e) {
 

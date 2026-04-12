@@ -5,6 +5,7 @@ const { getDb } = require("../db");
 const { APPLE_APP_ID } = require("../config");
 const { authLimiter } = require("../middleware/rateLimiter");
 const { sanitizeUser, signAccessToken, createRefreshToken } = require("../utils/authHelpers");
+const { hashField, encryptUserFields } = require("../utils/crypto");
 const logger = require("../utils/logger");
 
 const router = express.Router();
@@ -61,16 +62,18 @@ router.post("/google", authLimiter, async (req, res) => {
     const { sub: googleId, email, name, picture } = await googleRes.json();
     if (!email) return res.status(400).json({ success: false, error: "Aucun email retourné par Google" });
 
-    let user = await db.collection("users").findOne({ $or: [{ googleId }, { email }] });
+    let user = await db.collection("users").findOne({ $or: [{ googleId }, { emailHash: hashField(email) }] });
     if (!user) {
-      const result = await db.collection("users").insertOne({
-        name: name || email.split("@")[0],
-        email,
-        googleId,
-        avatar: picture || null,
-        verified: true,
-        createdAt: new Date(),
-      });
+      const result = await db.collection("users").insertOne(
+        encryptUserFields({
+          name: name || email.split("@")[0],
+          email,
+          googleId,
+          avatar: picture || null,
+          verified: true,
+          createdAt: new Date(),
+        })
+      );
       user = await db.collection("users").findOne({ _id: result.insertedId });
     } else if (!user.googleId) {
       await db.collection("users").updateOne({ _id: user._id }, { $set: { googleId } });
@@ -111,16 +114,18 @@ router.post("/apple", authLimiter, async (req, res) => {
       : fallbackName;
 
     let user = await db.collection("users").findOne({
-      $or: [{ appleId }, ...(userEmail ? [{ email: userEmail }] : [])],
+      $or: [{ appleId }, ...(userEmail ? [{ emailHash: hashField(userEmail) }] : [])],
     });
     if (!user) {
-      const result = await db.collection("users").insertOne({
-        name: userName || "User",
-        email: userEmail,
-        appleId,
-        verified: true,
-        createdAt: new Date(),
-      });
+      const result = await db.collection("users").insertOne(
+        encryptUserFields({
+          name: userName || "User",
+          email: userEmail,
+          appleId,
+          verified: true,
+          createdAt: new Date(),
+        })
+      );
       user = await db.collection("users").findOne({ _id: result.insertedId });
     } else if (!user.appleId) {
       await db.collection("users").updateOne({ _id: user._id }, { $set: { appleId } });

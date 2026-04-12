@@ -4,6 +4,7 @@ const { getDb } = require("../db");
 const { requireAuth } = require("../middleware/auth");
 const logger = require("../utils/logger");
 const { sendFriendRequestFoundEmail } = require("../utils/email");
+const { hashField, decrypt } = require("../utils/crypto");
 
 const router = express.Router();
 
@@ -12,8 +13,8 @@ async function linkPendingFriendRequests(userId, userEmail, userPhone) {
   try {
     const db = getDb();
     const conditions = [];
-    if (userEmail) conditions.push({ recipientEmail: userEmail });
-    if (userPhone) conditions.push({ recipientPhone: userPhone });
+    if (userEmail) conditions.push({ recipientEmailHash: hashField(userEmail) });
+    if (userPhone) conditions.push({ recipientPhoneHash: hashField(userPhone) });
     if (conditions.length === 0) return 0;
 
     const pending = await db.collection("friendRequests").find({
@@ -34,7 +35,7 @@ async function linkPendingFriendRequests(userId, userEmail, userPhone) {
       const sender = await db.collection("users").findOne({ _id: new ObjectId(request.senderId) });
       if (sender) {
         await sendFriendRequestFoundEmail(
-          sender.email,
+          sender.email ? decrypt(sender.email) : null,
           newUser?.name || userEmail,
           sender.language || "fr"
         );
@@ -92,7 +93,7 @@ router.get("/suggestions", requireAuth, async (req, res) => {
     const suggestions = users.map((u) => ({
       id: String(u._id),
       name: u.name || "Utilisateur",
-      email: u.email,
+      email: u.email ? decrypt(u.email) : null,
       avatar: u.avatar || null,
       commonFriends: commonCount[String(u._id)] || 0,
     }));
@@ -129,8 +130,8 @@ router.get("/", requireAuth, async (req, res) => {
       userId: f.userId,
       friendId: f.friendId,
       name: f.name,
-      email: f.email,
-      phone: f.phone,
+      email: f.email ? decrypt(f.email) : f.email,
+      phone: f.phone ? decrypt(f.phone) : f.phone,
       avatar: avatarMap.get(f.friendId) ?? f.avatar ?? null,
       createdAt: f.createdAt,
     })));

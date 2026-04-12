@@ -24,9 +24,14 @@ function getDb() {
 
 async function _ensureIndexes() {
   try {
-    await db.collection("users").createIndex({ email: 1 }, { unique: true });
+    await db.collection("users").createIndex({ emailHash: 1 }, { unique: true, sparse: true });
   } catch (err) {
-    logger.error("[db] Erreur lors de la création de l'index users.email :", err.message);
+    logger.error("[db] Erreur lors de la création de l'index users.emailHash :", err.message);
+  }
+  try {
+    await db.collection("users").createIndex({ phoneHash: 1 }, { sparse: true });
+  } catch (err) {
+    logger.error("[db] Erreur lors de la création de l'index users.phoneHash :", err.message);
   }
 
   try {

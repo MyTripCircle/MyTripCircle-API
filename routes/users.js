@@ -7,6 +7,7 @@ const { requireAuth } = require("../middleware/auth");
 const { sanitizeUser, isStrongPassword, trimIfString } = require("../utils/authHelpers");
 const { linkPendingFriendRequests } = require("./friends");
 const { isValidEmail, isValidPhone } = require("../utils/validators");
+const { hashField, encrypt, decrypt, decryptUserFields } = require("../utils/crypto");
 
 const router = express.Router();
 
@@ -30,19 +31,26 @@ router.put("/me", requireAuth, async (req, res) => {
       return res.status(400).json({ success: false, error: "Nom et email requis" });
     }
 
-    const existing = await db.collection("users").findOne({ email, _id: { $ne: userId } });
+    const existing = await db.collection("users").findOne({ emailHash: hashField(email), _id: { $ne: userId } });
     if (existing) return res.status(409).json({ success: false, error: "Email déjà utilisé" });
 
-    const updateData = { name, email, updatedAt: new Date() };
-    if (phone) updateData.phone = phone;
+    const updateData = {
+      name,
+      email: encrypt(email),
+      emailHash: hashField(email),
+      updatedAt: new Date(),
+    };
+    if (phone !== undefined) {
+      updateData.phone = phone ? encrypt(phone) : null;
+      updateData.phoneHash = phone ? hashField(phone) : null;
+    }
 
     const language = req.body?.language;
     if (language === "en" || language === "fr") updateData.language = language;
 
     await db.collection("users").updateOne({ _id: userId }, { $set: updateData });
 
-    const user = await db.collection("users").findOne({ _id: userId });
-    if (user) await linkPendingFriendRequests(String(userId), user.email, user.phone);
+    await linkPendingFriendRequests(String(userId), email, phone || null);
 
     const updated = await db.collection("users").findOne({ _id: userId });
     return res.json({ success: true, user: sanitizeUser(updated) });
@@ -196,6 +204,11 @@ router.delete("/me", requireAuth, async (req, res) => {
       db.collection("friends").deleteMany({
         $or: [{ userId: userIdStr }, { friendId: userIdStr }],
       }),
+      db.collection("friendRequests").deleteMany({
+        $or: [{ senderId: userIdStr }, { recipientId: userIdStr }],
+      }),
+      db.collection("refreshTokens").deleteMany({ userId: userIdStr }),
+      db.collection("itinerary_usage").deleteMany({ userId: userIdStr }),
     ]);
 
     await db.collection("users").deleteOne({ _id: userId });
@@ -227,7 +240,7 @@ router.post("/batch", requireAuth, async (req, res) => {
       _id: u._id,
       id: String(u._id),
       name: u.name,
-      email: u.email,
+      email: u.email ? decrypt(u.email) : null,
       avatar: u.avatar,
     })));
   } catch (e) {
@@ -255,8 +268,8 @@ router.get("/lookup", requireAuth, async (req, res) => {
     }
 
     const query = email
-      ? { email: email.toLowerCase().trim() }
-      : { phone: phone.trim() };
+      ? { emailHash: hashField(email.toLowerCase().trim()) }
+      : { phoneHash: hashField(phone.trim()) };
 
     const found = await db.collection("users").findOne(query);
     if (!found) return res.status(404).json({ error: "Utilisateur introuvable" });
@@ -278,11 +291,12 @@ router.get("/lookup", requireAuth, async (req, res) => {
     const myFriendIds = new Set(myFriends.map((f) => f.friendId));
     const commonFriends = theirFriends.filter((f) => myFriendIds.has(f.friendId)).length;
 
+    const decryptedFound = decryptUserFields(found);
     return res.json({
       id: foundId,
-      name: found.name,
-      email: found.email,
-      avatar: found.avatar || null,
+      name: decryptedFound.name,
+      email: decryptedFound.email,
+      avatar: decryptedFound.avatar || null,
       stats: { totalTrips, countries, commonFriends },
       relation: determineRelation(alreadyFriend, pendingSent, pendingReceived),
     });
@@ -290,6 +304,67 @@ router.get("/lookup", requireAuth, async (req, res) => {
 
     logger.error("[users]", e.message);
 
+    return res.status(500).json({ error: "Erreur interne du serveur" });
+  }
+});
+
+// GET /users/me/export — export RGPD de toutes les données personnelles
+router.get("/me/export", requireAuth, async (req, res) => {
+  try {
+    const db = getDb();
+    const userId = req.user._id;
+    const userIdStr = String(userId);
+
+    const [user, trips, bookings, addresses, friends] = await Promise.all([
+      db.collection("users").findOne({ _id: userId }),
+      db.collection("trips").find({ ownerId: userIdStr }).toArray(),
+      db.collection("bookings").find({ userId: userIdStr }).toArray(),
+      db.collection("addresses").find({ userId: userIdStr }).toArray(),
+      db.collection("friends").find({ userId: userIdStr }).toArray(),
+    ]);
+
+    const exported = {
+      exportedAt: new Date().toISOString(),
+      profile: {
+        id: userIdStr,
+        name: user.name,
+        email: user.email,
+        phone: user.phone || null,
+        language: user.language || "fr",
+        createdAt: user.createdAt,
+      },
+      trips: trips.map((t) => ({
+        id: String(t._id),
+        destination: t.destination,
+        startDate: t.startDate,
+        endDate: t.endDate,
+        description: t.description,
+        collaborators: t.collaborators,
+        createdAt: t.createdAt,
+      })),
+      bookings: bookings.map((b) => ({
+        id: String(b._id),
+        type: b.type,
+        date: b.date,
+        address: b.address,
+        confirmationNumber: b.confirmationNumber,
+        createdAt: b.createdAt,
+      })),
+      addresses: addresses.map((a) => ({
+        id: String(a._id),
+        label: a.label,
+        formattedAddress: a.formattedAddress,
+        coordinates: a.coordinates,
+        createdAt: a.createdAt,
+      })),
+      friends: friends.map((f) => ({ friendId: f.friendId, createdAt: f.createdAt })),
+    };
+
+    res.setHeader("Content-Disposition", "attachment; filename=mytripcircle-export.json");
+    res.setHeader("Content-Type", "application/json");
+    return res.json(exported);
+  } catch (e) {
+    logger.error("[users]", e.message);
     return res.status(500).json({ error: "Erreur interne du serveur" });
   }
 });

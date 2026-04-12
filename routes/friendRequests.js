@@ -4,6 +4,7 @@ const { ObjectId } = require("mongodb");
 const { getDb } = require("../db");
 const { requireAuth } = require("../middleware/auth");
 const { sendFriendRequestEmail } = require("../utils/email");
+const { hashField, encrypt, decrypt, decryptUserFields } = require("../utils/crypto");
 
 const router = express.Router();
 
@@ -24,6 +25,7 @@ async function checkRegisteredRecipient(db, senderId, sender, recipientUser) {
       { _id: incomingRequest._id },
       { $set: { status: "accepted", respondedAt: now } }
     );
+    // recipientUser et sender sont des docs bruts DB (email chiffré) — on copie directement
     await db.collection("friends").insertMany([
       { userId: senderId, friendId: recipientId, name: recipientUser.name, email: recipientUser.email, phone: recipientUser.phone, createdAt: now },
       { userId: recipientId, friendId: senderId, name: sender?.name || "Quelqu'un", email: sender?.email, phone: sender?.phone, createdAt: now },
@@ -46,9 +48,9 @@ function isSelf(senderId, sender, recipientIdParam, recipientEmail, recipientPho
 
 async function findRecipientUser(db, recipientIdParam, recipientEmail, recipientPhone) {
   if (recipientIdParam) return db.collection("users").findOne({ _id: new ObjectId(recipientIdParam) });
-  const byEmail = recipientEmail && await db.collection("users").findOne({ email: recipientEmail });
+  const byEmail = recipientEmail && await db.collection("users").findOne({ emailHash: hashField(recipientEmail) });
   if (byEmail) return byEmail;
-  return recipientPhone ? db.collection("users").findOne({ phone: recipientPhone }) : null;
+  return recipientPhone ? db.collection("users").findOne({ phoneHash: hashField(recipientPhone) }) : null;
 }
 
 async function validateRecipient(db, senderId, sender, recipientUser, recipientEmail, recipientPhone) {
@@ -64,8 +66,8 @@ async function validateRecipient(db, senderId, sender, recipientUser, recipientE
 
 async function checkUnregisteredDuplicate(db, senderId, recipientEmail, recipientPhone) {
   const query = { senderId, recipientId: null, status: "pending" };
-  if (recipientEmail) query.recipientEmail = recipientEmail;
-  if (recipientPhone) query.recipientPhone = recipientPhone;
+  if (recipientEmail) query.recipientEmailHash = hashField(recipientEmail);
+  if (recipientPhone) query.recipientPhoneHash = hashField(recipientPhone);
   const existingRequest = await db.collection("friendRequests").findOne(query);
   return existingRequest ? "Demande déjà en attente" : null;
 }
@@ -81,7 +83,7 @@ router.post("/request", requireAuth, async (req, res) => {
       return res.status(400).json({ error: "Email, téléphone ou ID requis" });
     }
 
-    const sender = await db.collection("users").findOne({ _id: new ObjectId(senderId) });
+    const sender = decryptUserFields(await db.collection("users").findOne({ _id: new ObjectId(senderId) }));
 
     if (isSelf(senderId, sender, recipientIdParam, recipientEmail, recipientPhone)) {
       return res.status(400).json({ error: "Impossible de s'envoyer une demande à soi-même" });
@@ -97,8 +99,14 @@ router.post("/request", requireAuth, async (req, res) => {
       senderId,
       senderName: sender?.name || "Quelqu'un",
       recipientId: recipientUser ? String(recipientUser._id) : null,
-      recipientEmail,
-      recipientPhone,
+      ...(recipientEmail && {
+        recipientEmail: encrypt(recipientEmail),
+        recipientEmailHash: hashField(recipientEmail),
+      }),
+      ...(recipientPhone && {
+        recipientPhone: encrypt(recipientPhone),
+        recipientPhoneHash: hashField(recipientPhone),
+      }),
       status: "pending",
       createdAt: new Date(),
     };
@@ -107,7 +115,8 @@ router.post("/request", requireAuth, async (req, res) => {
     friendRequest._id = result.insertedId;
 
     if (recipientUser) {
-      await sendFriendRequestEmail(recipientUser.email, sender?.name || "Quelqu'un", recipientUser.language || "fr");
+      const decryptedRecipient = decryptUserFields(recipientUser);
+      await sendFriendRequestEmail(decryptedRecipient.email, sender?.name || "Quelqu'un", decryptedRecipient.language || "fr");
     }
 
     return res.json(friendRequest);
@@ -173,8 +182,8 @@ router.get("/requests", requireAuth, async (req, res) => {
       senderName: r.senderName,
       recipientId: r.recipientId,
       recipientName: recipientNameMap[r.recipientId] || null,
-      recipientEmail: r.recipientEmail,
-      recipientPhone: r.recipientPhone,
+      recipientEmail: r.recipientEmail ? decrypt(r.recipientEmail) : r.recipientEmail,
+      recipientPhone: r.recipientPhone ? decrypt(r.recipientPhone) : r.recipientPhone,
       status: r.status,
       createdAt: r.createdAt,
       respondedAt: r.respondedAt,
@@ -218,8 +227,10 @@ router.put("/requests/:requestId", requireAuth, async (req, res) => {
 
       const now = new Date();
       const sender = await db.collection("users").findOne({ _id: new ObjectId(request.senderId) });
+      // req.user est déchiffré par le middleware — on re-chiffre pour stocker dans friends
+      // sender est un doc brut avec email déjà chiffré — on copie directement
       await db.collection("friends").insertMany([
-        { userId: request.senderId, friendId: request.recipientId, name: req.user.name, email: req.user.email, phone: req.user.phone, createdAt: now },
+        { userId: request.senderId, friendId: request.recipientId, name: req.user.name, email: encrypt(req.user.email), phone: req.user.phone ? encrypt(req.user.phone) : null, createdAt: now },
         { userId: request.recipientId, friendId: request.senderId, name: sender?.name || request.senderName, email: sender?.email, phone: sender?.phone, createdAt: now },
       ]);
     }

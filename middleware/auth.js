@@ -2,6 +2,7 @@ const jwt = require("jsonwebtoken");
 const { ObjectId } = require("mongodb");
 const { JWT_SECRET } = require("../config");
 const { getDb } = require("../db");
+const { decryptUserFields } = require("../utils/crypto");
 
 async function requireAuth(req, res, next) {
   try {
@@ -22,7 +23,7 @@ async function requireAuth(req, res, next) {
       return res.status(401).json({ success: false, error: "Non autorisé" });
     }
 
-    req.user = user;
+    req.user = decryptUserFields(user);
     next();
   } catch {
     return res.status(401).json({ success: false, error: "Non autorisé" });

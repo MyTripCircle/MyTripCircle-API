@@ -2,6 +2,7 @@ const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const crypto = require("node:crypto");
 const { JWT_SECRET, REFRESH_SECRET } = require("../config");
+const { decrypt } = require("./crypto");
 
 const OTP_EXPIRY_MS = 10 * 60 * 1000;
 
@@ -19,8 +20,8 @@ function sanitizeUser(doc) {
   return {
     id: String(doc._id),
     name: doc.name,
-    email: doc.email,
-    phone: doc.phone,
+    email: doc.email ? decrypt(doc.email) : doc.email,
+    phone: doc.phone ? decrypt(doc.phone) : doc.phone,
     avatar: doc.avatar,
     verified: doc.verified || false,
     createdAt: doc.createdAt,
@@ -30,7 +31,7 @@ function sanitizeUser(doc) {
 }
 
 function signAccessToken(userId) {
-  return jwt.sign({ id: String(userId) }, JWT_SECRET, { expiresIn: "1h" });
+  return jwt.sign({ id: String(userId) }, JWT_SECRET, { expiresIn: "15m" });
 }
 
 async function createRefreshToken(db, userId) {
