@@ -54,6 +54,40 @@ function isEncrypted(value) {
   return value.split(":").length === 3;
 }
 
+function getEmailHashKey(collectionName, emailField) {
+  if (collectionName === "users") return "emailHash";
+  if (emailField === "inviteeEmail") return "inviteeEmailHash";
+  if (emailField === "recipientEmail") return "recipientEmailHash";
+  return null;
+}
+
+function getPhoneHashKey(collectionName, phoneField) {
+  if (collectionName === "users") return "phoneHash";
+  if (phoneField === "inviteePhone") return "inviteePhoneHash";
+  if (phoneField === "recipientPhone") return "recipientPhoneHash";
+  return null;
+}
+
+function buildDocumentUpdates(doc, collectionName, emailField, phoneField) {
+  const updates = {};
+  const email = doc[emailField];
+  const phone = phoneField ? doc[phoneField] : null;
+
+  if (email && !isEncrypted(email)) {
+    updates[emailField] = encrypt(email);
+    const hashKey = getEmailHashKey(collectionName, emailField);
+    if (hashKey) updates[hashKey] = hashField(email);
+  }
+
+  if (phone && !isEncrypted(phone)) {
+    updates[phoneField] = encrypt(phone);
+    const hashKey = getPhoneHashKey(collectionName, phoneField);
+    if (hashKey) updates[hashKey] = hashField(phone);
+  }
+
+  return updates;
+}
+
 async function migrateCollection(db, collectionName, emailField, phoneField) {
   const col = db.collection(collectionName);
   const cursor = col.find({});
@@ -62,32 +96,7 @@ async function migrateCollection(db, collectionName, emailField, phoneField) {
 
   while (await cursor.hasNext()) {
     const doc = await cursor.next();
-    const updates = {};
-
-    const email = doc[emailField];
-    const phone = phoneField ? doc[phoneField] : null;
-
-    if (email && !isEncrypted(email)) {
-      updates[emailField] = encrypt(email);
-      if (collectionName === "users") {
-        updates.emailHash = hashField(email);
-      } else if (emailField === "inviteeEmail") {
-        updates.inviteeEmailHash = hashField(email);
-      } else if (emailField === "recipientEmail") {
-        updates.recipientEmailHash = hashField(email);
-      }
-    }
-
-    if (phone && !isEncrypted(phone)) {
-      updates[phoneField] = encrypt(phone);
-      if (collectionName === "users") {
-        updates.phoneHash = phone ? hashField(phone) : null;
-      } else if (phoneField === "inviteePhone") {
-        updates.inviteePhoneHash = hashField(phone);
-      } else if (phoneField === "recipientPhone") {
-        updates.recipientPhoneHash = hashField(phone);
-      }
-    }
+    const updates = buildDocumentUpdates(doc, collectionName, emailField, phoneField);
 
     if (Object.keys(updates).length > 0) {
       await col.updateOne({ _id: doc._id }, { $set: updates }, { bypassDocumentValidation: true });
