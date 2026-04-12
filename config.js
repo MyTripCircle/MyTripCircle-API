@@ -35,6 +35,7 @@ module.exports = {
   API_BASE_URL:
     process.env.API_BASE_URL || "https://mytripcircle-api.enzo-turpin.fr",
   GROQ_API_KEY: process.env.GROQ_API_KEY,
+  GOOGLE_PLACES_API_KEY: process.env.GOOGLE_PLACES_API_KEY || "",
   // Bundle ID de l'app iOS — utilisé pour valider l'audience des tokens Apple
   APPLE_APP_ID: process.env.APPLE_APP_ID || null,
 };

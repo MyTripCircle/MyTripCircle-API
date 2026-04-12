@@ -23,6 +23,17 @@ async function requireAuth(req, res, next) {
       return res.status(401).json({ success: false, error: "Non autorisé" });
     }
 
+    // Autoriser l'accès à cancel-deletion même si le compte est en attente de suppression
+    const isCancelDeletion = req.path === "/me/cancel-deletion" && req.method === "POST";
+    if (user.pendingDeletion && !isCancelDeletion) {
+      return res.status(403).json({
+        success: false,
+        error: "Compte en cours de suppression",
+        pendingDeletion: true,
+        deletionScheduledAt: user.deletionScheduledAt,
+      });
+    }
+
     req.user = decryptUserFields(user);
     next();
   } catch {

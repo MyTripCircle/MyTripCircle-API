@@ -8,6 +8,7 @@ const { sanitizeUser, isStrongPassword, trimIfString } = require("../utils/authH
 const { linkPendingFriendRequests } = require("./friends");
 const { isValidEmail, isValidPhone } = require("../utils/validators");
 const { hashField, encrypt, decrypt, decryptUserFields } = require("../utils/crypto");
+const { sendDataExportEmail } = require("../utils/email");
 
 const router = express.Router();
 
@@ -187,36 +188,96 @@ router.put("/change-password", requireAuth, async (req, res) => {
   }
 });
 
-// DELETE /users/me
+// DELETE /users/me — planifie la suppression dans 7 jours et envoie un export par email
 router.delete("/me", requireAuth, async (req, res) => {
   try {
     const db = getDb();
     const userId = req.user._id;
     const userIdStr = String(userId);
 
+    // Si la suppression est déjà planifiée, on ne replanifie pas
+    if (req.user.pendingDeletion) {
+      return res.json({ success: true, scheduledAt: req.user.deletionScheduledAt, alreadyPending: true });
+    }
+
+    const deletionScheduledAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+
+    // Marquer le compte comme "suppression en attente" et révoquer tous les refresh tokens
     await Promise.all([
-      db.collection("trips").deleteMany({ ownerId: userIdStr }),
-      db.collection("bookings").deleteMany({ userId: userIdStr }),
-      db.collection("addresses").deleteMany({ userId: userIdStr }),
-      db.collection("invitations").deleteMany({
-        $or: [{ inviterId: userIdStr }, { inviteeId: userIdStr }],
-      }),
-      db.collection("friends").deleteMany({
-        $or: [{ userId: userIdStr }, { friendId: userIdStr }],
-      }),
-      db.collection("friendRequests").deleteMany({
-        $or: [{ senderId: userIdStr }, { recipientId: userIdStr }],
-      }),
+      db.collection("users").updateOne(
+        { _id: userId },
+        { $set: { pendingDeletion: true, deletionScheduledAt, updatedAt: new Date() } }
+      ),
       db.collection("refreshTokens").deleteMany({ userId: userIdStr }),
-      db.collection("itinerary_usage").deleteMany({ userId: userIdStr }),
     ]);
 
-    await db.collection("users").deleteOne({ _id: userId });
+    // Construire et envoyer l'export par email (best-effort, pas bloquant)
+    try {
+      const [user, trips, bookings, addresses, friends] = await Promise.all([
+        db.collection("users").findOne({ _id: userId }),
+        db.collection("trips").find({ ownerId: userIdStr }).toArray(),
+        db.collection("bookings").find({ userId: userIdStr }).toArray(),
+        db.collection("addresses").find({ userId: userIdStr }).toArray(),
+        db.collection("friends").find({ userId: userIdStr }).toArray(),
+      ]);
+
+      const decryptedUser = decryptUserFields(user);
+      const exportData = {
+        exportedAt: new Date().toISOString(),
+        profile: {
+          id: userIdStr,
+          name: decryptedUser.name,
+          email: decryptedUser.email,
+          phone: decryptedUser.phone || null,
+          language: user.language || "fr",
+          createdAt: user.createdAt,
+        },
+        trips: trips.map((t) => ({
+          id: String(t._id), destination: t.destination,
+          startDate: t.startDate, endDate: t.endDate,
+          description: t.description, collaborators: t.collaborators, createdAt: t.createdAt,
+        })),
+        bookings: bookings.map((b) => ({
+          id: String(b._id), type: b.type, date: b.date,
+          address: b.address, confirmationNumber: b.confirmationNumber, createdAt: b.createdAt,
+        })),
+        addresses: addresses.map((a) => ({
+          id: String(a._id), label: a.label,
+          formattedAddress: a.formattedAddress, coordinates: a.coordinates, createdAt: a.createdAt,
+        })),
+        friends: friends.map((f) => ({ friendId: f.friendId, createdAt: f.createdAt })),
+      };
+
+      await sendDataExportEmail(decryptedUser.email, exportData);
+    } catch (emailErr) {
+      logger.warn("[users] Échec envoi export email:", emailErr.message);
+    }
+
+    return res.json({ success: true, scheduledAt: deletionScheduledAt });
+  } catch (e) {
+    logger.error("[users]", e.message);
+    return res.status(500).json({ success: false, error: "Erreur interne du serveur" });
+  }
+});
+
+// POST /users/me/cancel-deletion — annule la suppression planifiée
+router.post("/me/cancel-deletion", requireAuth, async (req, res) => {
+  try {
+    const db = getDb();
+    const userId = req.user._id;
+
+    if (!req.user.pendingDeletion) {
+      return res.status(400).json({ success: false, error: "Aucune suppression planifiée" });
+    }
+
+    await db.collection("users").updateOne(
+      { _id: userId },
+      { $unset: { pendingDeletion: "", deletionScheduledAt: "" }, $set: { updatedAt: new Date() } }
+    );
+
     return res.json({ success: true });
   } catch (e) {
-
     logger.error("[users]", e.message);
-
     return res.status(500).json({ success: false, error: "Erreur interne du serveur" });
   }
 });

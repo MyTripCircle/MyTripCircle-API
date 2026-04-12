@@ -9,6 +9,8 @@ const { connectMongo } = require("./db");
 const logger = require("./utils/logger");
 const { generalLimiter } = require("./middleware/rateLimiter");
 const { errorHandler, notFound } = require("./middleware/errorHandler");
+const { startCleanupJob } = require("./utils/cleanupJob");
+const { auditLog } = require("./middleware/auditLog");
 
 const { router: authRouter } = require("./routes/auth");
 const oauthRouter = require("./routes/oauth");
@@ -22,6 +24,7 @@ const friendsRouter = require("./routes/friends");
 const friendRequestsRouter = require("./routes/friendRequests");
 const friendInvitesRouter = require("./routes/friendInvites");
 const itineraryRouter = require("./routes/itinerary");
+const placesRouter = require("./routes/places");
 
 // Validation des variables d'environnement au démarrage
 validateEnv();
@@ -54,6 +57,9 @@ app.use((req, _res, next) => {
   next();
 });
 
+// ─── Audit log accès données personnelles ─────────────────────────────────────
+app.use(auditLog);
+
 // ─── Routes ───────────────────────────────────────────────────────────────────
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
@@ -69,6 +75,7 @@ app.use("/friends", friendsRouter);
 app.use("/friends", friendRequestsRouter);
 app.use("/friends", friendInvitesRouter);
 app.use("/itinerary", itineraryRouter);
+app.use("/places", placesRouter);
 
 // Deep link redirect (reset mot de passe)
 app.get("/reset-password", (req, res) => {
@@ -107,6 +114,7 @@ connectMongo()
     app.listen(PORT, () => {
       logger.info(`[server] API démarrée sur http://${ACTIVE_IP}:${PORT}`);
       logger.info(`[server] Également accessible via http://localhost:${PORT}`);
+      startCleanupJob();
     });
   })
   .catch((err) => {

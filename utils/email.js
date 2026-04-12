@@ -224,6 +224,41 @@ async function sendTripInvitationEmail(
   return _send(to, t.subject, html);
 }
 
+async function sendDataExportEmail(to, exportData) {
+  const profile = exportData.profile || {};
+  const tripsCount = (exportData.trips || []).length;
+  const bookingsCount = (exportData.bookings || []).length;
+  const addressesCount = (exportData.addresses || []).length;
+  const friendsCount = (exportData.friends || []).length;
+  const exportJson = JSON.stringify(exportData, null, 2);
+
+  const html = wrap(`
+    ${heading("Export de vos données personnelles")}
+    <p style="color: ${COLORS.inkMid}; font-size: 15px; margin: 0 0 20px;">
+      Suite à votre demande de suppression de compte, voici l'intégralité de vos données personnelles au format JSON.
+    </p>
+    ${infoCard(`
+      ${cardLine(`👤 Nom : ${bold(profile.name || "—")}`, { size: 14, marginBottom: 6 })}
+      ${cardLine(`✉️ Email : ${bold(profile.email || "—")}`, { size: 14, marginBottom: 6 })}
+      ${cardLine(`🌍 Voyages : ${bold(String(tripsCount))}`, { size: 14, marginBottom: 6 })}
+      ${cardLine(`🎫 Réservations : ${bold(String(bookingsCount))}`, { size: 14, marginBottom: 6 })}
+      ${cardLine(`📍 Adresses : ${bold(String(addressesCount))}`, { size: 14, marginBottom: 6 })}
+      ${cardLine(`👥 Amis : ${bold(String(friendsCount))}`, { size: 14 })}
+    `)}
+    <p style="color: ${COLORS.inkLight}; font-size: 13px; margin: 16px 0 0;">
+      ⏳ Votre compte sera définitivement supprimé dans <strong>7 jours</strong>.<br>
+      Si vous changez d'avis, vous pouvez annuler la suppression depuis l'application.
+    </p>
+    <p style="color: ${COLORS.inkLight}; font-size: 12px; margin: 12px 0 0;">
+      Export généré le ${new Date().toLocaleDateString("fr-FR")} à ${new Date().toLocaleTimeString("fr-FR")}.
+    </p>
+  `);
+
+  const text = `Export de vos données MyTripCircle\n\nVotre compte sera supprimé dans 7 jours.\n\n${exportJson}`;
+
+  return _send(to, "Export de vos données personnelles — MyTripCircle", html, text);
+}
+
 async function sendFriendJoinedEmail(to, newFriendName) {
   const html = wrap(
     heading("Nouvel ami !") +
@@ -240,4 +275,5 @@ module.exports = {
   sendFriendRequestFoundEmail,
   sendTripInvitationEmail,
   sendFriendJoinedEmail,
+  sendDataExportEmail,
 };
