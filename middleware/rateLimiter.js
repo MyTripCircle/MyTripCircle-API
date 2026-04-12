@@ -32,6 +32,7 @@ const searchLimiter = rateLimit({
     const userId = req.user?._id ? String(req.user._id) : null;
     return userId || req.ip || "unknown";
   },
+  validate: { keyGeneratorIpFallback: false },
   message: { success: false, error: "Trop de recherches. Réessayez dans une minute." },
 });
 
