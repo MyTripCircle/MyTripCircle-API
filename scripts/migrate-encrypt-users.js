@@ -10,6 +10,15 @@
 
 require("dotenv").config();
 
+const REQUIRED = ["MONGODB_URI", "ENCRYPTION_KEY", "HMAC_KEY"];
+const missing = REQUIRED.filter((k) => !process.env[k]);
+if (missing.length > 0) {
+  console.error(`Variables manquantes : ${missing.join(", ")}`);
+  console.error("\nPasse-les en ligne de commande :");
+  console.error(`  MONGODB_URI="mongodb+srv://..." node server/scripts/migrate-encrypt-users.js`);
+  process.exit(1);
+}
+
 const { MongoClient } = require("mongodb");
 const crypto = require("node:crypto");
 
