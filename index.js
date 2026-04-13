@@ -25,6 +25,7 @@ const friendRequestsRouter = require("./routes/friendRequests");
 const friendInvitesRouter = require("./routes/friendInvites");
 const itineraryRouter = require("./routes/itinerary");
 const placesRouter = require("./routes/places");
+const legalRouter = require("./routes/legal");
 
 // Validation des variables d'environnement au démarrage
 validateEnv();
@@ -76,6 +77,7 @@ app.use("/friends", friendRequestsRouter);
 app.use("/friends", friendInvitesRouter);
 app.use("/itinerary", itineraryRouter);
 app.use("/places", placesRouter);
+app.use("/", legalRouter);
 
 // Deep link redirect (reset mot de passe)
 app.get("/reset-password", (req, res) => {
