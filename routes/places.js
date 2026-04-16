@@ -84,11 +84,12 @@ router.get("/textsearch", requireAuth, async (req, res) => {
     const upstream = await fetch(`${BASE}/textsearch/json?${params}`);
     const data = await upstream.json();
 
-    if (data.status === "ZERO_RESULTS" || !data.results?.length) return res.json({ results: [] });
+    logger.info(`[places] textsearch — status: ${data.status}${data.error_message ? ` | ${data.error_message}` : ""} | query: "${query}"`);
+    if (data.status === "ZERO_RESULTS") return res.json({ results: [] });
     if (data.status !== "OK") {
-      logger.warn(`[places] textsearch status: ${data.status}`);
-      return res.status(502).json({ error: `Places API: ${data.status}` });
+      return res.status(502).json({ error: `Places API: ${data.status}`, detail: data.error_message });
     }
+    if (!data.results?.length) return res.json({ results: [] });
 
     const results = data.results.map((place) => {
       const photoRef = place.photos?.[0]?.photo_reference;
