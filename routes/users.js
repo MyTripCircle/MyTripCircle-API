@@ -434,6 +434,35 @@ router.get("/me/export", requireAuth, async (req, res) => {
   }
 });
 
+// POST /users/push-token — enregistre ou met à jour le token Expo push de l'appareil
+router.post("/push-token", requireAuth, async (req, res) => {
+  try {
+    const db = getDb();
+    const userId = String(req.user._id);
+    const { token, platform } = req.body;
+
+    if (typeof token !== "string" || !token.startsWith("ExponentPushToken[")) {
+      return res.status(400).json({ success: false, error: "Token invalide" });
+    }
+
+    await db.collection("users").updateOne(
+      { _id: new ObjectId(userId) },
+      {
+        $set: {
+          pushToken: token,
+          pushPlatform: platform ?? "expo",
+          pushTokenUpdatedAt: new Date(),
+        },
+      }
+    );
+
+    return res.json({ success: true });
+  } catch (e) {
+    logger.error("[users] push-token", e.message);
+    return res.status(500).json({ success: false, error: "Erreur interne du serveur" });
+  }
+});
+
 // POST /users/consent — RGPD Art. 7 : enregistre le consentement côté serveur avec preuve horodatée
 router.post("/consent", requireAuth, async (req, res) => {
   try {
