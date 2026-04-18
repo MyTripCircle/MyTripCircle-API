@@ -17,6 +17,43 @@ const calendarLimiter = rateLimit({
   message: "Trop de requêtes.",
 });
 
+function buildEventDescription(booking, tripMap) {
+  const trip = booking.tripId ? tripMap[booking.tripId] : null;
+  const tripLine = trip?.title || trip?.destination
+    ? `Voyage : ${trip.title || trip.destination}`
+    : null;
+  const confirmLine = booking.confirmationNumber
+    ? `N° confirmation : ${booking.confirmationNumber}`
+    : null;
+  return [tripLine, confirmLine, booking.description || null].filter(Boolean).join("\n");
+}
+
+function addBookingsToCalendar(calendar, bookings, tripMap) {
+  for (const booking of bookings) {
+    if (!booking.date) continue;
+    const start = new Date(booking.date);
+    const end = booking.endDate
+      ? new Date(booking.endDate)
+      : new Date(start.getTime() + 60 * 60 * 1000);
+    // uid déterministe : même booking → même UID entre les synchronisations
+    const uid = crypto
+      .createHash("sha256")
+      .update(String(booking._id))
+      .digest("hex")
+      .slice(0, 32)
+      .concat("@mytripcircle");
+    const description = buildEventDescription(booking, tripMap);
+    calendar.createEvent({
+      id: uid,
+      summary: booking.title || booking.type || "Réservation",
+      description: description || undefined,
+      location: booking.address || undefined,
+      start,
+      end,
+    });
+  }
+}
+
 // GET /calendar/:token — flux iCal public (synchronisation native iOS/Android)
 router.get("/:token", calendarLimiter, async (req, res) => {
   try {
@@ -34,9 +71,7 @@ router.get("/:token", calendarLimiter, async (req, res) => {
 
     const sub = await db.collection("subscriptions").findOne({ userId });
     const isPremium =
-      sub?.status === "active" &&
-      sub?.endDate &&
-      new Date(sub.endDate) > new Date();
+      sub?.status === "active" && sub?.endDate && new Date(sub.endDate) > new Date();
     if (!isPremium) return res.status(403).end();
 
     const userTrips = await db
@@ -60,51 +95,10 @@ router.get("/:token", calendarLimiter, async (req, res) => {
       .toArray();
 
     const calendar = ical.default({ name: "MyTripCircle", timezone: "UTC" });
-
-    for (const booking of bookings) {
-      if (!booking.date) continue;
-
-      const start = new Date(booking.date);
-      const end = booking.endDate
-        ? new Date(booking.endDate)
-        : new Date(start.getTime() + 60 * 60 * 1000);
-
-      const trip = booking.tripId ? tripMap[booking.tripId] : null;
-      const description = [
-        trip?.title || trip?.destination
-          ? `Voyage : ${trip.title || trip.destination}`
-          : null,
-        booking.confirmationNumber
-          ? `N° confirmation : ${booking.confirmationNumber}`
-          : null,
-        booking.description || null,
-      ]
-        .filter(Boolean)
-        .join("\n");
-
-      // uid déterministe : même booking → même UID entre les synchronisations
-      const uid = crypto
-        .createHash("sha256")
-        .update(String(booking._id))
-        .digest("hex")
-        .slice(0, 32)
-        .concat("@mytripcircle");
-
-      calendar.createEvent({
-        id: uid,
-        summary: booking.title || booking.type || "Réservation",
-        description: description || undefined,
-        location: booking.address || undefined,
-        start,
-        end,
-      });
-    }
+    addBookingsToCalendar(calendar, bookings, tripMap);
 
     res.setHeader("Content-Type", "text/calendar; charset=utf-8");
-    res.setHeader(
-      "Content-Disposition",
-      'attachment; filename="mytripcircle.ics"'
-    );
+    res.setHeader("Content-Disposition", 'attachment; filename="mytripcircle.ics"');
     res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
     return res.send(calendar.toString());
   } catch (e) {
