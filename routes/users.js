@@ -1,4 +1,5 @@
 const express = require("express");
+const crypto = require("node:crypto");
 const bcrypt = require("bcrypt");
 const logger = require("../utils/logger");
 const { ObjectId } = require("mongodb");
@@ -432,6 +433,72 @@ router.get("/me/export", requireAuth, async (req, res) => {
   } catch (e) {
     logger.error("[users]", e.message);
     return res.status(500).json({ error: "Erreur interne du serveur" });
+  }
+});
+
+// GET /users/calendar/token — récupère le token iCal actuel
+router.get("/calendar/token", requireAuth, async (req, res) => {
+  try {
+    const db = getDb();
+    const userId = String(req.user._id);
+
+    const sub = await db.collection("subscriptions").findOne({ userId });
+    const isPremium =
+      sub?.status === "active" &&
+      sub?.endDate &&
+      new Date(sub.endDate) > new Date();
+    if (!isPremium) {
+      return res.status(403).json({ success: false, error: "Abonnement premium requis" });
+    }
+
+    const user = await db.collection("users").findOne({ _id: req.user._id });
+    return res.json({ success: true, token: user.calendarToken || null });
+  } catch (e) {
+    logger.error("[users] GET calendar/token", e.message);
+    return res.status(500).json({ success: false, error: "Erreur interne du serveur" });
+  }
+});
+
+// POST /users/calendar/token — génère ou régénère le token iCal
+router.post("/calendar/token", requireAuth, async (req, res) => {
+  try {
+    const db = getDb();
+    const userId = String(req.user._id);
+
+    const sub = await db.collection("subscriptions").findOne({ userId });
+    const isPremium =
+      sub?.status === "active" &&
+      sub?.endDate &&
+      new Date(sub.endDate) > new Date();
+    if (!isPremium) {
+      return res.status(403).json({ success: false, error: "Abonnement premium requis" });
+    }
+
+    const token = crypto.randomBytes(32).toString("hex");
+    await db.collection("users").updateOne(
+      { _id: req.user._id },
+      { $set: { calendarToken: token, updatedAt: new Date() } }
+    );
+
+    return res.json({ success: true, token });
+  } catch (e) {
+    logger.error("[users] POST calendar/token", e.message);
+    return res.status(500).json({ success: false, error: "Erreur interne du serveur" });
+  }
+});
+
+// DELETE /users/calendar/token — révoque le token iCal
+router.delete("/calendar/token", requireAuth, async (req, res) => {
+  try {
+    const db = getDb();
+    await db.collection("users").updateOne(
+      { _id: req.user._id },
+      { $unset: { calendarToken: "" }, $set: { updatedAt: new Date() } }
+    );
+    return res.json({ success: true });
+  } catch (e) {
+    logger.error("[users] DELETE calendar/token", e.message);
+    return res.status(500).json({ success: false, error: "Erreur interne du serveur" });
   }
 });
 

@@ -11,12 +11,17 @@ const authLimiter = rateLimit({
   message: { success: false, error: "Trop de tentatives. Réessayez dans 15 minutes." },
 });
 
-// Limite standard pour les endpoints authentifiés
+// Limite par utilisateur authentifié (ou par IP en fallback)
 const generalLimiter = rateLimit({
   windowMs: 60 * 1000,
-  max: 60,
+  max: 1000,
   standardHeaders: true,
   legacyHeaders: false,
+  keyGenerator: (req) => {
+    const userId = req.user?._id ? String(req.user._id) : null;
+    return userId || req.ip || "unknown";
+  },
+  validate: { keyGeneratorIpFallback: false },
   message: { success: false, error: "Trop de requêtes. Ralentissez." },
 });
 
