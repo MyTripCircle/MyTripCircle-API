@@ -27,6 +27,7 @@ const itineraryRouter = require("./routes/itinerary");
 const placesRouter = require("./routes/places");
 const legalRouter = require("./routes/legal");
 const moderationRouter = require("./routes/moderation");
+const subscriptionsRouter = require("./routes/subscriptions");
 
 // Validation des variables d'environnement au démarrage
 validateEnv();
@@ -40,9 +41,7 @@ app.set("trust proxy", 1);
 app.use(helmet());
 app.use(helmet.hsts({ maxAge: 31536000, includeSubDomains: true, preload: true }));
 
-const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS
-  ? process.env.ALLOWED_ORIGINS.split(",").map((o) => o.trim())
-  : [];
+const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS?.split(",").map((o) => o.trim()) ?? [];
 
 app.use(cors({
   origin: ALLOWED_ORIGINS,
@@ -80,6 +79,7 @@ app.use("/itinerary", itineraryRouter);
 app.use("/places", placesRouter);
 app.use("/", legalRouter);
 app.use("/moderation", moderationRouter);
+app.use("/subscriptions", subscriptionsRouter);
 
 // Deep link redirect (reset mot de passe)
 app.get("/reset-password", (req, res) => {

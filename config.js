@@ -62,4 +62,10 @@ module.exports = {
   GOOGLE_PLACES_API_KEY: process.env.GOOGLE_PLACES_API_KEY || "",
   // Bundle ID de l'app iOS — utilisé pour valider l'audience des tokens Apple
   APPLE_APP_ID: process.env.APPLE_APP_ID || null,
+  // Secret partagé App Store Connect (Shared Secret) pour valider les reçus IAP
+  // Requis uniquement quand IAP_SKIP_VALIDATION=false (production)
+  APPLE_SHARED_SECRET: process.env.APPLE_SHARED_SECRET || null,
+  // true = bypass validation Apple (dev/test sans compte Apple Developer)
+  // false = validation stricte via buy.itunes.apple.com (production)
+  IAP_SKIP_VALIDATION: process.env.IAP_SKIP_VALIDATION !== "false",
 };

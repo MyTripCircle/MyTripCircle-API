@@ -65,6 +65,15 @@ async function _ensureIndexes() {
     logger.error("[db] Erreur lors de la création des index auditLogs :", err.message);
   }
 
+  // Subscriptions : lookup par userId + TTL auto-nettoyage après 2 ans
+  try {
+    await db.collection("subscriptions").createIndex({ userId: 1 }, { unique: true });
+    await db.collection("subscriptions").createIndex({ status: 1 });
+    await db.collection("subscriptions").createIndex({ endDate: 1 });
+  } catch (err) {
+    logger.error("[db] Erreur lors de la création des index subscriptions :", err.message);
+  }
+
   // RGPD Art. 7 — Consentements : index userId pour lookup rapide + TTL 5 ans
   try {
     await db.collection("user_consents").createIndex({ userId: 1 });
