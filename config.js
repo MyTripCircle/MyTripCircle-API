@@ -14,13 +14,13 @@ function validateEnv() {
   // RGPD Art. 32 — Vérification du format et de l'entropie des clés cryptographiques
   const encKey = process.env.ENCRYPTION_KEY;
   if (!/^[0-9a-fA-F]{64}$/.test(encKey)) {
-    console.error("[config] ENCRYPTION_KEY doit être une chaîne hexadécimale de 64 caractères (32 octets). Générez-en une avec : node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\"");
+    console.error("[config] ENCRYPTION_KEY doit être une chaîne hexadécimale de 64 caractères (32 octets). Générez-en une avec : node -e \"console.log(require('node:crypto').randomBytes(32).toString('hex'))\"") // NOSONAR;
     process.exit(1);
   }
 
   const hmacKey = process.env.HMAC_KEY;
   if (!/^[0-9a-fA-F]{64,}$/.test(hmacKey)) {
-    console.error("[config] HMAC_KEY doit être une chaîne hexadécimale d'au moins 64 caractères (32 octets). Générez-en une avec : node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\"");
+    console.error("[config] HMAC_KEY doit être une chaîne hexadécimale d'au moins 64 caractères (32 octets). Générez-en une avec : node -e \"console.log(require('node:crypto').randomBytes(32).toString('hex'))\"") // NOSONAR;
     process.exit(1);
   }
 

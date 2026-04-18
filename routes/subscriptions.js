@@ -91,44 +91,54 @@ function extractLatestAppleTransaction(appleResponse, productId) {
 }
 
 /**
+ * Calcule la date de fin pour un achat iOS en validant le reçu Apple.
+ * Retourne { endDate, resolvedTransactionId }.
+ */
+async function computeIosEndDate({ receiptData, productId, transactionId, userId, now }) {
+  const skipValidation = process.env.IAP_SKIP_VALIDATION === "true";
+
+  if (skipValidation) {
+    const durationMs = PLAN_DURATIONS_MS[productId];
+    if (!durationMs) throw new Error(`ProductId inconnu : ${productId}`);
+    logger.warn(`[subscriptions] IAP_SKIP_VALIDATION actif — validation Apple ignorée pour userId=${userId}`);
+    return { endDate: new Date(now.getTime() + durationMs), resolvedTransactionId: transactionId };
+  }
+
+  const sharedSecret = process.env.APPLE_SHARED_SECRET;
+  if (!sharedSecret) throw new Error("APPLE_SHARED_SECRET non configuré");
+
+  const appleResponse = await verifyAppleReceipt(receiptData, sharedSecret);
+
+  // status 0 = valide, 21007 = sandbox (déjà retranté dans verifyAppleReceipt)
+  if (appleResponse.status !== 0) {
+    logger.warn(`[subscriptions] Apple status ${appleResponse.status} pour userId=${userId}`);
+    throw new Error(`Reçu Apple invalide (status ${appleResponse.status})`);
+  }
+
+  const tx = extractLatestAppleTransaction(appleResponse, productId);
+  if (!tx) throw new Error("Transaction introuvable dans le reçu Apple");
+
+  const expiresMs = Number(tx.expires_date_ms);
+  if (!expiresMs || expiresMs <= Date.now()) throw new Error("Abonnement expiré ou invalide");
+
+  return { endDate: new Date(expiresMs), resolvedTransactionId: tx.transaction_id || transactionId };
+}
+
+/**
  * Valide et persiste un achat IAP.
  * En dev (IAP_SKIP_VALIDATION=true), l'appel Apple est bypassé.
  */
 async function validateAndPersist({ userId, receiptData, platform, productId, transactionId }) {
   const db = getDb();
-  const skipValidation = process.env.IAP_SKIP_VALIDATION === "true";
   const now = new Date();
 
   let endDate;
+  let resolvedTransactionId = transactionId;
 
   if (platform === "ios") {
-    if (!skipValidation) {
-      const sharedSecret = process.env.APPLE_SHARED_SECRET;
-      if (!sharedSecret) throw new Error("APPLE_SHARED_SECRET non configuré");
-
-      const appleResponse = await verifyAppleReceipt(receiptData, sharedSecret);
-
-      // status 0 = valide, 21007 = sandbox (déjà retranté dans verifyAppleReceipt)
-      if (appleResponse.status !== 0) {
-        logger.warn(`[subscriptions] Apple status ${appleResponse.status} pour userId=${userId}`);
-        throw new Error(`Reçu Apple invalide (status ${appleResponse.status})`);
-      }
-
-      const tx = extractLatestAppleTransaction(appleResponse, productId);
-      if (!tx) throw new Error("Transaction introuvable dans le reçu Apple");
-
-      const expiresMs = Number(tx.expires_date_ms);
-      if (!expiresMs || expiresMs <= Date.now()) throw new Error("Abonnement expiré ou invalide");
-
-      endDate = new Date(expiresMs);
-      transactionId = tx.transaction_id || transactionId;
-    } else {
-      // Mode dev : durée calculée côté serveur
-      const durationMs = PLAN_DURATIONS_MS[productId];
-      if (!durationMs) throw new Error(`ProductId inconnu : ${productId}`);
-      endDate = new Date(now.getTime() + durationMs);
-      logger.warn(`[subscriptions] IAP_SKIP_VALIDATION actif — validation Apple ignorée pour userId=${userId}`);
-    }
+    const result = await computeIosEndDate({ receiptData, productId, transactionId, userId, now });
+    endDate = result.endDate;
+    resolvedTransactionId = result.resolvedTransactionId;
   } else {
     // Android : à implémenter via Google Play Developer API
     const durationMs = PLAN_DURATIONS_MS[productId];
@@ -142,7 +152,7 @@ async function validateAndPersist({ userId, receiptData, platform, productId, tr
     status: "active",
     platform,
     productId,
-    transactionId: transactionId || null,
+    transactionId: resolvedTransactionId || null,
     features: PREMIUM_FEATURES,
     startDate: now,
     endDate,

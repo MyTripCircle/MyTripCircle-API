@@ -102,7 +102,8 @@ Le champ "place" doit être le nom précis du lieu principal de l'activité, tel
       const end = rawText.lastIndexOf("}");
       if (start === -1 || end === -1 || end <= start) throw new Error("Aucun objet JSON trouvé");
       parsedData = JSON.parse(rawText.slice(start, end + 1));
-    } catch {
+    } catch (e) {
+      logger.warn("[itinerary] Erreur parsing JSON itinéraire:", e.message);
       return res.status(500).json({ error: "parse_error" });
     }
 

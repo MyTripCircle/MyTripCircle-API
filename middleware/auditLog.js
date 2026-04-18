@@ -35,8 +35,8 @@ function auditLog(req, res, next) {
           userAgent: req.headers["user-agent"] || null,
           createdAt: new Date(),
         }).catch((err) => logger.error("[auditLog] Erreur persistence MongoDB:", err.message));
-      } catch {
-        // DB pas encore connectée — log console uniquement
+      } catch (e) {
+        logger.warn("[auditLog] DB non disponible, audit ignoré:", e.message);
       }
     });
   }

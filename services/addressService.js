@@ -9,7 +9,7 @@ function isValidHttpUrl(url) {
   try {
     const u = new URL(url);
     return ["http:", "https:"].includes(u.protocol);
-  } catch {
+  } catch (_e) {
     return false;
   }
 }

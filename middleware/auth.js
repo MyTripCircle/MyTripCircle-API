@@ -3,6 +3,7 @@ const { ObjectId } = require("mongodb");
 const { JWT_SECRET } = require("../config");
 const { getDb } = require("../db");
 const { decryptUserFields } = require("../utils/crypto");
+const logger = require("../utils/logger");
 
 async function requireAuth(req, res, next) {
   try {
@@ -36,7 +37,8 @@ async function requireAuth(req, res, next) {
 
     req.user = decryptUserFields(user);
     next();
-  } catch {
+  } catch (e) {
+    logger.warn("[auth] Token invalide ou expiré:", e.message);
     return res.status(401).json({ success: false, error: "Non autorisé" });
   }
 }
