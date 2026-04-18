@@ -307,7 +307,7 @@ router.delete("/:id", requireAuth, async (req, res) => {
     const { id } = req.params;
 
     let inv;
-    try { inv = await db.collection("invitations").findOne({ _id: new ObjectId(id) }); } catch { inv = null; }
+    try { inv = await db.collection("invitations").findOne({ _id: new ObjectId(id) }); } catch (e) { logger.warn("[invitations] ID invalide:", e.message); inv = null; }
     if (!inv) return res.status(404).json({ error: "Invitation introuvable" });
     if (inv.inviterId !== userId) return res.status(403).json({ error: "Impossible d'annuler l'invitation d'un autre" });
 

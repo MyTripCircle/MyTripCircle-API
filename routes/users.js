@@ -92,7 +92,8 @@ router.put("/avatar", requireAuth, async (req, res) => {
         if (url.protocol !== "https:") {
           return res.status(400).json({ success: false, error: "URL d'avatar invalide (HTTPS requis)" });
         }
-      } catch {
+      } catch (e) {
+        logger.warn("[users/avatar] URL invalide:", e.message);
         return res.status(400).json({ success: false, error: "Format d'avatar invalide" });
       }
     }
@@ -296,7 +297,7 @@ router.post("/batch", requireAuth, searchLimiter, async (req, res) => {
     }
 
     const objectIds = ids
-      .map((id) => { try { return new ObjectId(id); } catch { return null; } })
+      .map((id) => { try { return new ObjectId(id); } catch (e) { logger.warn("[users/batch] ID invalide ignoré:", e.message); return null; } })
       .filter(Boolean);
 
     const users = await db.collection("users").find({ _id: { $in: objectIds } }).toArray();

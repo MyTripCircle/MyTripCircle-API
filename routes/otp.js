@@ -155,7 +155,10 @@ router.get("/reset-password-page", async (req, res) => {
       }
     );
 
-    const deepLink = `mytripcircle://reset-password?code=${resetCode}`;
+    // Le resetCode est généré par crypto.randomBytes (hex uniquement) — encodage par précaution
+    const safeCode = encodeURIComponent(resetCode);
+    const deepLink = `mytripcircle://reset-password?code=${safeCode}`;
+    const escapedDeepLink = deepLink.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
     return res.send(`<!DOCTYPE html>
 <html lang="fr">
 <head>
@@ -168,12 +171,12 @@ router.get("/reset-password-page", async (req, res) => {
     p { color: #7A6A58; margin-bottom: 24px; text-align: center; max-width: 320px; }
     a { background: #C4714A; color: white; padding: 14px 28px; border-radius: 12px; text-decoration: none; font-size: 16px; }
   </style>
-  <script>window.location.href = "${deepLink}";</script>
+  <script>window.location.href = "${escapedDeepLink}";</script>
 </head>
 <body>
   <h2>MyTripCircle</h2>
   <p>Appuyez sur le bouton ci-dessous pour réinitialiser votre mot de passe dans l'app.</p>
-  <a href="${deepLink}">Ouvrir l'application</a>
+  <a href="${escapedDeepLink}">Ouvrir l'application</a>
 </body>
 </html>`);
   } catch (e) {

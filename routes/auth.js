@@ -245,7 +245,8 @@ router.post("/refresh", async (req, res) => {
 
     const token = signAccessToken(payload.id);
     return res.json({ success: true, token, refreshToken: newRefreshToken });
-  } catch {
+  } catch (e) {
+    logger.error("[auth/refresh] Token invalide ou expiré :", e.message);
     return res.status(401).json({ success: false, error: "Token invalide ou expiré" });
   }
 });
@@ -257,8 +258,9 @@ router.post("/logout", async (req, res) => {
     try {
       const db = getDb();
       await db.collection("refreshTokens").deleteOne({ token: hashToken(refreshToken) });
-    } catch {
+    } catch (e) {
       // Silencieux : on déconnecte quoi qu'il arrive
+      logger.warn("[auth/logout] Erreur suppression refresh token :", e.message);
     }
   }
   return res.json({ success: true });

@@ -43,36 +43,39 @@ function verifyAppleReceipt(receiptData, sharedSecret) {
     });
 
     function callEndpoint(hostname) {
-      const options = {
-        hostname,
-        path: "/verifyReceipt",
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) },
-      };
+      return new Promise((innerResolve, innerReject) => {
+        const options = {
+          hostname,
+          path: "/verifyReceipt",
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) },
+        };
 
-      const req = https.request(options, (res) => {
-        let data = "";
-        res.on("data", (chunk) => { data += chunk; });
-        res.on("end", () => {
-          try {
-            const parsed = JSON.parse(data);
-            // 21007 = reçu sandbox envoyé en prod → retenter en sandbox
-            if (parsed.status === 21007 && hostname === "buy.itunes.apple.com") {
-              return callEndpoint("sandbox.itunes.apple.com").then(resolve).catch(reject);
+        const req = https.request(options, (res) => {
+          let data = "";
+          res.on("data", (chunk) => { data += chunk; });
+          res.on("end", () => {
+            try {
+              const parsed = JSON.parse(data);
+              // 21007 = reçu sandbox envoyé en prod → retenter en sandbox
+              if (parsed.status === 21007 && hostname === "buy.itunes.apple.com") {
+                callEndpoint("sandbox.itunes.apple.com").then(innerResolve).catch(innerReject);
+                return;
+              }
+              innerResolve(parsed);
+            } catch (e) {
+              innerReject(new Error("Réponse Apple non-JSON"));
             }
-            resolve(parsed);
-          } catch (e) {
-            reject(new Error("Réponse Apple non-JSON"));
-          }
+          });
         });
-      });
 
-      req.on("error", reject);
-      req.write(body);
-      req.end();
+        req.on("error", innerReject);
+        req.write(body);
+        req.end();
+      });
     }
 
-    callEndpoint("buy.itunes.apple.com");
+    callEndpoint("buy.itunes.apple.com").then(resolve).catch(reject);
   });
 }
 

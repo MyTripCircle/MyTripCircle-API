@@ -171,7 +171,7 @@ router.get("/requests", requireAuth, async (req, res) => {
       const recipientIdList = sent.map((r) => r.recipientId).filter(Boolean);
       if (recipientIdList.length > 0) {
         const recipientUsers = await db.collection("users").find({
-          _id: { $in: recipientIdList.map((id) => { try { return new ObjectId(id); } catch { return null; } }).filter(Boolean) },
+          _id: { $in: recipientIdList.map((id) => { try { return new ObjectId(id); } catch (e) { logger.warn("[friendRequests] ID invalide ignoré:", e.message); return null; } }).filter(Boolean) },
         }).project({ _id: 1, name: 1 }).toArray();
         recipientUsers.forEach((u) => { recipientNameMap[String(u._id)] = u.name ? decrypt(u.name) : null; });
       }
