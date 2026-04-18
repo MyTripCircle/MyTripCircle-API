@@ -268,7 +268,7 @@ router.post("/cancel", requireAuth, async (req, res) => {
 
     const sub = await db.collection("subscriptions").findOne({ userId });
 
-    if (!sub || sub.status !== "active") {
+    if (sub?.status !== "active") {
       return res.status(400).json({ success: false, error: "Aucun abonnement actif à annuler" });
     }
 

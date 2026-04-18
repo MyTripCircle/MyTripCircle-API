@@ -158,7 +158,7 @@ router.get("/reset-password-page", async (req, res) => {
     // Le resetCode est généré par crypto.randomBytes (hex uniquement) — encodage par précaution
     const safeCode = encodeURIComponent(resetCode);
     const deepLink = `mytripcircle://reset-password?code=${safeCode}`;
-    const escapedDeepLink = deepLink.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
+    const escapedDeepLink = deepLink.replaceAll("&", "&amp;").replaceAll('"', "&quot;");
     return res.send(`<!DOCTYPE html>
 <html lang="fr">
 <head>
