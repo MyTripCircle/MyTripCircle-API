@@ -6,7 +6,7 @@ const logger = require("../utils/logger");
 
 const router = express.Router();
 
-const VALID_REASONS = ["inappropriate", "spam", "harassment", "fake", "other"];
+const VALID_REASONS = new Set(["inappropriate", "spam", "harassment", "fake", "other"]);
 
 // POST /moderation/report — signaler un utilisateur ou un voyage
 router.post("/report", requireAuth, async (req, res) => {
@@ -21,7 +21,7 @@ router.post("/report", requireAuth, async (req, res) => {
     if (!targetId || typeof targetId !== "string") {
       return res.status(400).json({ success: false, error: "targetId requis" });
     }
-    if (!VALID_REASONS.includes(reason)) {
+    if (!VALID_REASONS.has(reason)) {
       return res.status(400).json({ success: false, error: "Raison invalide" });
     }
     if (targetType === "user" && targetId === reporterId) {

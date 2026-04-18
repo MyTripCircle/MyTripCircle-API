@@ -30,53 +30,49 @@ const PREMIUM_FEATURES = {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
+// 21007 = reçu sandbox envoyé en prod → retenter en sandbox
+function callAppleEndpoint(hostname, body) {
+  return new Promise((resolve, reject) => {
+    const options = {
+      hostname,
+      path: "/verifyReceipt",
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) },
+    };
+
+    const req = https.request(options, (res) => {
+      let data = "";
+      res.on("data", (chunk) => { data += chunk; });
+      res.on("end", () => {
+        try {
+          const parsed = JSON.parse(data);
+          if (parsed.status === 21007 && hostname === "buy.itunes.apple.com") {
+            return callAppleEndpoint("sandbox.itunes.apple.com", body).then(resolve).catch(reject);
+          }
+          resolve(parsed);
+        } catch (e) {
+          reject(new Error(`Réponse Apple non-JSON : ${e instanceof Error ? e.message : String(e)}`));
+        }
+      });
+    });
+
+    req.on("error", reject);
+    req.write(body);
+    req.end();
+  });
+}
+
 /**
  * Appelle l'API de vérification Apple (StoreKit 1).
  * Essaie d'abord l'endpoint production, retente en sandbox si status 21007.
  */
 function verifyAppleReceipt(receiptData, sharedSecret) {
-  return new Promise((resolve, reject) => {
-    const body = JSON.stringify({
-      "receipt-data": receiptData,
-      password: sharedSecret,
-      "exclude-old-transactions": true,
-    });
-
-    function callEndpoint(hostname) {
-      return new Promise((innerResolve, innerReject) => {
-        const options = {
-          hostname,
-          path: "/verifyReceipt",
-          method: "POST",
-          headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) },
-        };
-
-        const req = https.request(options, (res) => {
-          let data = "";
-          res.on("data", (chunk) => { data += chunk; });
-          res.on("end", () => {
-            try {
-              const parsed = JSON.parse(data);
-              // 21007 = reçu sandbox envoyé en prod → retenter en sandbox
-              if (parsed.status === 21007 && hostname === "buy.itunes.apple.com") {
-                callEndpoint("sandbox.itunes.apple.com").then(innerResolve).catch(innerReject);
-                return;
-              }
-              innerResolve(parsed);
-            } catch (e) {
-              innerReject(new Error("Réponse Apple non-JSON"));
-            }
-          });
-        });
-
-        req.on("error", innerReject);
-        req.write(body);
-        req.end();
-      });
-    }
-
-    callEndpoint("buy.itunes.apple.com").then(resolve).catch(reject);
+  const body = JSON.stringify({
+    "receipt-data": receiptData,
+    password: sharedSecret,
+    "exclude-old-transactions": true,
   });
+  return callAppleEndpoint("buy.itunes.apple.com", body);
 }
 
 /**
@@ -90,18 +86,22 @@ function extractLatestAppleTransaction(appleResponse, productId) {
   return matching[0] || null;
 }
 
+function computeSkipValidationEndDate(productId, transactionId, userId, now) {
+  const durationMs = PLAN_DURATIONS_MS[productId];
+  if (durationMs) {
+    logger.warn(`[subscriptions] IAP_SKIP_VALIDATION actif — validation Apple ignorée pour userId=${userId}`);
+    return { endDate: new Date(now.getTime() + durationMs), resolvedTransactionId: transactionId };
+  }
+  throw new Error(`ProductId inconnu : ${productId}`);
+}
+
 /**
  * Calcule la date de fin pour un achat iOS en validant le reçu Apple.
  * Retourne { endDate, resolvedTransactionId }.
  */
 async function computeIosEndDate({ receiptData, productId, transactionId, userId, now }) {
-  const skipValidation = process.env.IAP_SKIP_VALIDATION === "true";
-
-  if (skipValidation) {
-    const durationMs = PLAN_DURATIONS_MS[productId];
-    if (!durationMs) throw new Error(`ProductId inconnu : ${productId}`);
-    logger.warn(`[subscriptions] IAP_SKIP_VALIDATION actif — validation Apple ignorée pour userId=${userId}`);
-    return { endDate: new Date(now.getTime() + durationMs), resolvedTransactionId: transactionId };
+  if (process.env.IAP_SKIP_VALIDATION === "true") {
+    return computeSkipValidationEndDate(productId, transactionId, userId, now);
   }
 
   const sharedSecret = process.env.APPLE_SHARED_SECRET;
@@ -109,7 +109,7 @@ async function computeIosEndDate({ receiptData, productId, transactionId, userId
 
   const appleResponse = await verifyAppleReceipt(receiptData, sharedSecret);
 
-  // status 0 = valide, 21007 = sandbox (déjà retranté dans verifyAppleReceipt)
+  // status 0 = valide, 21007 = sandbox (déjà retenté dans verifyAppleReceipt)
   if (appleResponse.status !== 0) {
     logger.warn(`[subscriptions] Apple status ${appleResponse.status} pour userId=${userId}`);
     throw new Error(`Reçu Apple invalide (status ${appleResponse.status})`);

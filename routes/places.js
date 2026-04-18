@@ -84,7 +84,8 @@ router.get("/textsearch", requireAuth, async (req, res) => {
     const upstream = await fetch(`${BASE}/textsearch/json?${params}`);
     const data = await upstream.json();
 
-    logger.info(`[places] textsearch — status: ${data.status}${data.error_message ? ` | ${data.error_message}` : ""} | query: "${query}"`);
+    const errorDetail = data.error_message ? ` | ${data.error_message}` : "";
+    logger.info(`[places] textsearch — status: ${data.status}${errorDetail} | query: "${query}"`);
     if (data.status === "ZERO_RESULTS") return res.json({ results: [] });
     if (data.status !== "OK") {
       return res.status(502).json({ error: `Places API: ${data.status}`, detail: data.error_message });
