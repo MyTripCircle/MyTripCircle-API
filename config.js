@@ -68,7 +68,4 @@ module.exports = {
   // true = bypass validation Apple (dev/test sans compte Apple Developer)
   // false = validation stricte via buy.itunes.apple.com (production)
   IAP_SKIP_VALIDATION: process.env.IAP_SKIP_VALIDATION !== "false",
-  AMADEUS_API_KEY: process.env.AMADEUS_API_KEY || null,
-  AMADEUS_API_SECRET: process.env.AMADEUS_API_SECRET || null,
-  AMADEUS_ENV: process.env.AMADEUS_ENV || "test",
 };

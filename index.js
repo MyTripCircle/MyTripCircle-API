@@ -29,7 +29,6 @@ const legalRouter = require("./routes/legal");
 const moderationRouter = require("./routes/moderation");
 const subscriptionsRouter = require("./routes/subscriptions");
 const calendarRouter = require("./routes/calendar");
-const travelRouter = require("./routes/travel");
 
 // Validation des variables d'environnement au démarrage
 validateEnv();
@@ -83,7 +82,6 @@ app.use("/", legalRouter);
 app.use("/moderation", moderationRouter);
 app.use("/subscriptions", subscriptionsRouter);
 app.use("/calendar", calendarRouter);
-app.use("/travel", travelRouter);
 
 // Deep link redirect (reset mot de passe)
 app.get("/reset-password", (req, res) => {
