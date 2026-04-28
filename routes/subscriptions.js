@@ -3,6 +3,7 @@ const https = require("node:https");
 const { getDb } = require("../db");
 const { requireAuth } = require("../middleware/auth");
 const logger = require("../utils/logger");
+const { FREE_FEATURES } = require("../utils/subscriptionHelper");
 
 const router = express.Router();
 
@@ -10,14 +11,6 @@ const router = express.Router();
 const PLAN_DURATIONS_MS = {
   "com.myapp.monthly": 30 * 24 * 60 * 60 * 1000,
   "com.myapp.yearly":  365 * 24 * 60 * 60 * 1000,
-};
-
-const FREE_FEATURES = {
-  maxTrips: 3,
-  maxCollaborators: 2,
-  canExport: false,
-  prioritySupport: false,
-  maxAttachments: 2,
 };
 
 const PREMIUM_FEATURES = {

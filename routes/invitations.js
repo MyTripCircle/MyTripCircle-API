@@ -7,6 +7,7 @@ const { requireAuth } = require("../middleware/auth");
 const { sendTripInvitationEmail } = require("../utils/email");
 const { API_BASE_URL } = require("../config");
 const { hashField, encrypt, decrypt, decryptUserFields } = require("../utils/crypto");
+const { getUserFeatures } = require("../utils/subscriptionHelper");
 
 const router = express.Router();
 
@@ -30,6 +31,13 @@ router.post("/", requireAuth, async (req, res) => {
     );
     if (!isOwner && !isCollaborator) {
       return res.status(403).json({ error: "Non autorisé à inviter" });
+    }
+
+    const features = await getUserFeatures(db, trip.ownerId);
+    if (features.maxCollaborators !== -1 && trip.collaborators.length >= features.maxCollaborators) {
+      return res.status(403).json({
+        error: `Limite de ${features.maxCollaborators} collaborateurs atteinte — passez à Premium pour en inviter davantage`,
+      });
     }
 
     const existingCollaborator = trip.collaborators.find(

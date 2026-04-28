@@ -1,5 +1,6 @@
 const { ObjectId } = require("mongodb");
 const { getDb } = require("../db");
+const { getUserFeatures } = require("../utils/subscriptionHelper");
 
 async function checkTripReadAccess(db, tripId, userId) {
   const trip = await db.collection("trips").findOne({ _id: new ObjectId(tripId) });
@@ -48,6 +49,17 @@ async function createTrip(data, userId) {
 
   if (!title || !destination || !startDate || !endDate) {
     return { error: "Champs requis manquants", status: 400 };
+  }
+
+  const features = await getUserFeatures(db, userId);
+  if (features.maxTrips !== -1) {
+    const tripCount = await db.collection("trips").countDocuments({ ownerId: userId });
+    if (tripCount >= features.maxTrips) {
+      return {
+        error: `Limite de ${features.maxTrips} voyages atteinte — passez à Premium pour en créer davantage`,
+        status: 403,
+      };
+    }
   }
 
   const start = new Date(startDate);
