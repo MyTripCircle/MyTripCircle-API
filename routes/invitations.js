@@ -11,6 +11,84 @@ const { getUserFeatures } = require("../utils/subscriptionHelper");
 
 const router = express.Router();
 
+// ── Helpers ────────────────────────────────────────────────────────────────
+
+function httpError(message, status) {
+  const err = new Error(message);
+  err.status = status;
+  return err;
+}
+
+function assertInviterCanInvite(trip, inviterId) {
+  const isOwner = trip.ownerId === inviterId;
+  const canInvite = trip.collaborators.some(
+    (c) => c.userId === inviterId && c.permissions.canInvite
+  );
+  if (!isOwner && !canInvite) throw httpError("Non autorisé à inviter", 403);
+}
+
+async function assertCollaboratorLimit(db, trip) {
+  const features = await getUserFeatures(db, trip.ownerId);
+  if (features.maxCollaborators !== -1 && trip.collaborators.length >= features.maxCollaborators) {
+    throw httpError(
+      `Limite de ${features.maxCollaborators} collaborateurs atteinte — passez à Premium pour en inviter davantage`,
+      403
+    );
+  }
+}
+
+async function assertNoDuplicate(db, trip, inviteQuery, inviteeEmail, inviteePhone) {
+  const alreadyMember = trip.collaborators.find(
+    (c) => (inviteeEmail && c.email === inviteeEmail) || (inviteePhone && c.phone === inviteePhone)
+  );
+  if (alreadyMember) throw httpError("Utilisateur déjà collaborateur", 400);
+
+  const existing = await db.collection("invitations").findOne(inviteQuery);
+  if (existing) throw httpError("Invitation déjà en attente", 400);
+}
+
+function buildInviteQuery(tripId, inviteeEmail, inviteePhone) {
+  const query = { tripId, status: "pending" };
+  if (inviteeEmail) query.inviteeEmailHash = hashField(inviteeEmail);
+  if (inviteePhone) query.inviteePhoneHash = hashField(inviteePhone);
+  return query;
+}
+
+function buildInvitationDoc(tripId, inviterId, { inviteeEmail, inviteePhone, token, permissions, message }) {
+  return {
+    tripId,
+    inviterId,
+    ...(inviteeEmail && { inviteeEmail: encrypt(inviteeEmail), inviteeEmailHash: hashField(inviteeEmail) }),
+    ...(inviteePhone && { inviteePhone: encrypt(inviteePhone), inviteePhoneHash: hashField(inviteePhone) }),
+    status: "pending",
+    token,
+    expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+    permissions: permissions || { role: "editor", canEdit: true, canInvite: false, canDelete: false },
+    message: message || "",
+    createdAt: new Date(),
+    respondedAt: null,
+  };
+}
+
+async function maybeSendInvitationEmail(db, inviteeEmail, inviterId, trip, token, message) {
+  if (!inviteeEmail) return;
+  const [inviter, inviteeUser] = await Promise.all([
+    db.collection("users").findOne({ _id: new ObjectId(inviterId) }),
+    db.collection("users").findOne({ emailHash: hashField(inviteeEmail) }),
+  ]);
+  await sendTripInvitationEmail(inviteeEmail, {
+    inviterName: (inviter?.name ? decrypt(inviter.name) : null) || "Quelqu'un",
+    tripTitle: trip.title,
+    tripDestination: trip.destination,
+    tripStartDate: trip.startDate,
+    tripEndDate: trip.endDate,
+    message,
+    invitationLink: `mytripcircle://invitation/${token}`,
+  }, inviteeUser?.language || "fr");
+}
+
+// ── Routes ─────────────────────────────────────────────────────────────────
+
 // POST /invitations
 router.post("/", requireAuth, async (req, res) => {
   try {
@@ -25,74 +103,24 @@ router.post("/", requireAuth, async (req, res) => {
     const trip = await db.collection("trips").findOne({ _id: new ObjectId(tripId) });
     if (!trip) return res.status(404).json({ error: "Voyage introuvable" });
 
-    const isOwner = trip.ownerId === inviterId;
-    const isCollaborator = trip.collaborators.some(
-      (c) => c.userId === inviterId && c.permissions.canInvite
-    );
-    if (!isOwner && !isCollaborator) {
-      return res.status(403).json({ error: "Non autorisé à inviter" });
-    }
+    assertInviterCanInvite(trip, inviterId);
+    await assertCollaboratorLimit(db, trip);
 
-    const features = await getUserFeatures(db, trip.ownerId);
-    if (features.maxCollaborators !== -1 && trip.collaborators.length >= features.maxCollaborators) {
-      return res.status(403).json({
-        error: `Limite de ${features.maxCollaborators} collaborateurs atteinte — passez à Premium pour en inviter davantage`,
-      });
-    }
-
-    const existingCollaborator = trip.collaborators.find(
-      (c) =>
-        (inviteeEmail && c.email === inviteeEmail) ||
-        (inviteePhone && c.phone === inviteePhone)
-    );
-    if (existingCollaborator) {
-      return res.status(400).json({ error: "Utilisateur déjà collaborateur" });
-    }
-
-    const inviteQuery = { tripId, status: "pending" };
-    if (inviteeEmail) inviteQuery.inviteeEmailHash = hashField(inviteeEmail);
-    if (inviteePhone) inviteQuery.inviteePhoneHash = hashField(inviteePhone);
-
-    const existingInvitation = await db.collection("invitations").findOne(inviteQuery);
-    if (existingInvitation) return res.status(400).json({ error: "Invitation déjà en attente" });
+    const inviteQuery = buildInviteQuery(tripId, inviteeEmail, inviteePhone);
+    await assertNoDuplicate(db, trip, inviteQuery, inviteeEmail, inviteePhone);
 
     const token = crypto.randomBytes(32).toString("hex");
-    const invitation = {
-      tripId,
-      inviterId,
-      ...(inviteeEmail && { inviteeEmail: encrypt(inviteeEmail), inviteeEmailHash: hashField(inviteeEmail) }),
-      ...(inviteePhone && { inviteePhone: encrypt(inviteePhone), inviteePhoneHash: hashField(inviteePhone) }),
-      status: "pending",
-      token,
-      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-      permissions: permissions || { role: "editor", canEdit: true, canInvite: false, canDelete: false },
-      message: message || "",
-      createdAt: new Date(),
-      respondedAt: null,
-    };
+    const invitation = buildInvitationDoc(tripId, inviterId, { inviteeEmail, inviteePhone, token, permissions, message });
 
     const result = await db.collection("invitations").insertOne(invitation);
     invitation._id = result.insertedId;
 
-    if (inviteeEmail) {
-      const inviter = await db.collection("users").findOne({ _id: new ObjectId(inviterId) });
-      const inviteeUser = await db.collection("users").findOne({ emailHash: hashField(inviteeEmail) });
-      await sendTripInvitationEmail(inviteeEmail, {
-        inviterName: (inviter?.name ? decrypt(inviter.name) : null) || "Quelqu'un",
-        tripTitle: trip.title,
-        tripDestination: trip.destination,
-        tripStartDate: trip.startDate,
-        tripEndDate: trip.endDate,
-        message,
-        invitationLink: `mytripcircle://invitation/${token}`,
-      }, inviteeUser?.language || "fr");
-    }
+    await maybeSendInvitationEmail(db, inviteeEmail, inviterId, trip, token, message);
 
     return res.status(201).json(invitation);
   } catch (e) {
-
+    if (e.status) return res.status(e.status).json({ error: e.message });
     logger.error("[invitations]", e.message);
-
     return res.status(500).json({ error: "Erreur interne du serveur" });
   }
 });
@@ -129,9 +157,7 @@ router.get("/user/:email", requireAuth, async (req, res) => {
 
     return res.json(enriched);
   } catch (e) {
-
     logger.error("[invitations]", e.message);
-
     return res.status(500).json({ error: "Erreur interne du serveur" });
   }
 });
@@ -152,9 +178,7 @@ router.get("/token/:token", async (req, res) => {
       inviter: inviter ? { _id: inviter._id, name: inviter.name ? decrypt(inviter.name) : null, email: inviter.email ? decrypt(inviter.email) : null, avatar: inviter.avatar } : null,
     });
   } catch (e) {
-
     logger.error("[invitations]", e.message);
-
     return res.status(500).json({ error: "Erreur interne du serveur" });
   }
 });
@@ -183,9 +207,7 @@ router.get("/sent", requireAuth, async (req, res) => {
 
     return res.json(enriched);
   } catch (e) {
-
     logger.error("[invitations]", e.message);
-
     return res.status(500).json({ error: "Erreur interne du serveur" });
   }
 });
@@ -230,9 +252,7 @@ router.post("/trip-link/:tripId", requireAuth, async (req, res) => {
 
     return res.status(201).json({ token, link: `${API_BASE_URL}/join/${token}` });
   } catch (e) {
-
     logger.error("[invitations]", e.message);
-
     return res.status(500).json({ error: "Erreur interne du serveur" });
   }
 });
@@ -300,9 +320,7 @@ router.put("/:token", requireAuth, async (req, res) => {
 
     return res.json({ success: true, status: newStatus });
   } catch (e) {
-
     logger.error("[invitations]", e.message);
-
     return res.status(500).json({ error: "Erreur interne du serveur" });
   }
 });
@@ -322,9 +340,7 @@ router.delete("/:id", requireAuth, async (req, res) => {
     await db.collection("invitations").deleteOne({ _id: new ObjectId(id) });
     return res.json({ success: true });
   } catch (e) {
-
     logger.error("[invitations]", e.message);
-
     return res.status(500).json({ error: "Erreur interne du serveur" });
   }
 });
@@ -345,9 +361,7 @@ router.get("/join/:token", async (req, res) => {
     }
     return res.redirect(`mytripcircle://invitation/${token}`);
   } catch (e) {
-
     logger.error("[invitations]", e.message);
-
     return res.status(500).json({ error: "Erreur interne du serveur" });
   }
 });
