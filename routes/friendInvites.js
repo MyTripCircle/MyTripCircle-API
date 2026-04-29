@@ -17,11 +17,17 @@ router.post("/invite-link", requireAuth, async (req, res) => {
 
     const existing = await db.collection("friendInviteLinks").findOne({ userId });
     if (existing) {
-      return res.json({ token: existing.token, link: `mytripcircle://friend-invite/${existing.token}` });
+      if (!existing.expiresAt || new Date() <= existing.expiresAt) {
+        return res.json({ token: existing.token, link: `mytripcircle://friend-invite/${existing.token}` });
+      }
+      await db.collection("friendInviteLinks").deleteOne({ _id: existing._id });
     }
 
     const token = crypto.randomBytes(32).toString("hex");
-    await db.collection("friendInviteLinks").insertOne({ userId, token, createdAt: new Date() });
+    await db.collection("friendInviteLinks").insertOne({
+      userId, token, createdAt: new Date(),
+      expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+    });
 
     return res.json({ token, link: `mytripcircle://friend-invite/${token}` });
   } catch (e) {
@@ -38,6 +44,7 @@ router.get("/invite-link/:token", async (req, res) => {
     const db = getDb();
     const link = await db.collection("friendInviteLinks").findOne({ token: req.params.token });
     if (!link) return res.status(404).json({ error: "Lien introuvable" });
+    if (link.expiresAt && new Date() > link.expiresAt) return res.status(400).json({ error: "Lien d'invitation expiré" });
 
     const owner = await db.collection("users").findOne({ _id: new ObjectId(link.userId) });
     if (!owner) return res.status(404).json({ error: "Utilisateur introuvable" });
@@ -60,6 +67,7 @@ router.post("/invite-link/:token/accept", requireAuth, async (req, res) => {
 
     const link = await db.collection("friendInviteLinks").findOne({ token });
     if (!link) return res.status(404).json({ error: "Lien introuvable" });
+    if (link.expiresAt && new Date() > link.expiresAt) return res.status(400).json({ error: "Lien d'invitation expiré" });
 
     const ownerId = link.userId;
     if (ownerId === currentUserId) return res.status(400).json({ error: "Impossible de s'ajouter soi-même" });
