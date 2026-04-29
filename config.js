@@ -67,5 +67,5 @@ module.exports = {
   APPLE_SHARED_SECRET: process.env.APPLE_SHARED_SECRET || null,
   // true = bypass validation Apple (dev/test sans compte Apple Developer)
   // false = validation stricte via buy.itunes.apple.com (production)
-  IAP_SKIP_VALIDATION: process.env.IAP_SKIP_VALIDATION !== "false",
+  IAP_SKIP_VALIDATION: process.env.IAP_SKIP_VALIDATION === "true",
 };
