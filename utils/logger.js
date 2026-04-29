@@ -5,7 +5,11 @@ function sanitize(...args) {
   return args.map((a) => {
     let s = String(a).replaceAll(/[\r\n]/g, " ");
     if (IS_PROD) {
-      s = s.replaceAll(/[^\s@"'<>]+@[^\s@"'<>.]+\.[a-zA-Z]{2,}/g, "[email]");
+      // Remplace chaque token contenant un @ par [email] sans regex complexe (évite ReDoS)
+      s = s.replace(/\S+/g, (token) => {
+        const at = token.indexOf("@");
+        return at > 0 && token.indexOf(".", at + 1) > at + 1 ? "[email]" : token;
+      });
     }
     return s;
   });
