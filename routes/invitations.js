@@ -163,7 +163,7 @@ router.get("/user/:email", requireAuth, async (req, res) => {
 });
 
 // GET /invitations/token/:token
-router.get("/token/:token", async (req, res) => {
+router.get("/token/:token", requireAuth, async (req, res) => {
   try {
     const db = getDb();
     const invitation = await db.collection("invitations").findOne({ token: req.params.token });

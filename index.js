@@ -78,6 +78,22 @@ app.use(auditLog);
 // ─── Routes ───────────────────────────────────────────────────────────────────
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
+// Android App Links — requis pour la vérification autoVerify (SEC-024)
+// Le SHA256 fingerprint doit correspondre au certificat de signature de l'APK.
+// Obtenir via : keytool -list -v -keystore <keystore> (ou depuis EAS Build)
+app.get("/.well-known/assetlinks.json", (_req, res) => {
+  res.json([{
+    relation: ["delegate_permission/common.handle_all_urls"],
+    target: {
+      namespace: "android_app",
+      package_name: "com.panda_sauvage.MyTripCircle",
+      sha256_cert_fingerprints: [
+        process.env.ANDROID_SHA256_FINGERPRINT || "",
+      ],
+    },
+  }]);
+});
+
 app.use("/users", authRouter);
 app.use("/users", oauthRouter);
 app.use("/users", otpRouter);
