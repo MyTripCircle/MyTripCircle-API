@@ -149,6 +149,10 @@ router.delete("/:friendId", requireAuth, async (req, res) => {
     const { friendId } = req.params;
     const userId = String(req.user._id);
 
+    if (!ObjectId.isValid(friendId)) {
+      return res.status(400).json({ error: "ID invalide" });
+    }
+
     await db.collection("friends").deleteMany({
       $or: [{ userId, friendId }, { userId: friendId, friendId: userId }],
     });

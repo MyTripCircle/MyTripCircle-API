@@ -134,7 +134,7 @@ router.get("/user/:email", requireAuth, async (req, res) => {
 
     // Vérification : seul l'utilisateur connecté peut voir ses propres invitations
     // req.user.email est déchiffré par le middleware
-    if (req.user.email !== email.toLowerCase()) {
+    if (req.user.email?.toLowerCase() !== email.toLowerCase()) {
       return res.status(403).json({ error: "Accès refusé" });
     }
 
