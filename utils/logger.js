@@ -6,7 +6,7 @@ function sanitize(...args) {
     let s = String(a).replaceAll(/[\r\n]/g, " ");
     if (IS_PROD) {
       // Remplace chaque token contenant un @ par [email] sans regex complexe (évite ReDoS)
-      s = s.replace(/\S+/g, (token) => {
+      s = s.replaceAll(/\S+/g, (token) => {
         const at = token.indexOf("@");
         return at > 0 && token.indexOf(".", at + 1) > at + 1 ? "[email]" : token;
       });

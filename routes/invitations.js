@@ -258,6 +258,59 @@ router.post("/trip-link/:tripId", requireAuth, async (req, res) => {
   }
 });
 
+// ── Helpers PUT /:token ────────────────────────────────────────────────────
+
+async function acceptLinkInvitation(db, invitation, userId) {
+  if (invitation.expiresAt && new Date() > invitation.expiresAt) {
+    throw httpError("Ce lien d'invitation a expiré", 400);
+  }
+
+  const trip = await db.collection("trips").findOne({ _id: new ObjectId(invitation.tripId) });
+  if (!trip) throw httpError("Voyage introuvable", 404);
+
+  const alreadyMember = trip.collaborators.some((c) => c.userId === userId) || trip.ownerId === userId;
+  if (alreadyMember) return { success: true, status: "accepted", message: "Déjà membre" };
+
+  await db.collection("invitations").updateOne({ _id: invitation._id }, { $inc: { usageCount: 1 } });
+
+  const perms = invitation.permissions || { role: "editor", canEdit: true, canInvite: false, canDelete: false };
+  await db.collection("trips").updateOne(
+    { _id: new ObjectId(invitation.tripId) },
+    { $push: { collaborators: { userId, role: perms.role, joinedAt: new Date(), permissions: perms, invitedBy: invitation.inviterId } } }
+  );
+
+  return { success: true, status: "accepted" };
+}
+
+async function handleDirectInvitation(db, invitation, user, userId, action) {
+  if (new Date() > invitation.expiresAt) {
+    await db.collection("invitations").updateOne({ _id: invitation._id }, { $set: { status: "expired" } });
+    throw httpError("Invitation expirée", 400);
+  }
+
+  if (invitation.status !== "pending") throw httpError("Invitation déjà traitée", 400);
+
+  if (action === "accept") {
+    const emailMatch = invitation.inviteeEmailHash && user.emailHash === invitation.inviteeEmailHash;
+    const phoneMatch = invitation.inviteePhoneHash && user.phoneHash === invitation.inviteePhoneHash;
+    if (!emailMatch && !phoneMatch) throw httpError("Cette invitation ne vous est pas destinée", 403);
+
+    const permissions = invitation.permissions || { role: "editor", canEdit: true, canInvite: false, canDelete: false };
+    await db.collection("trips").updateOne(
+      { _id: new ObjectId(invitation.tripId) },
+      { $push: { collaborators: { userId, role: permissions.role, joinedAt: new Date(), permissions, invitedBy: invitation.inviterId } } }
+    );
+  }
+
+  const newStatus = action === "accept" ? "accepted" : "declined";
+  await db.collection("invitations").updateOne(
+    { _id: invitation._id },
+    { $set: { status: newStatus, respondedAt: new Date() } }
+  );
+
+  return { success: true, status: newStatus };
+}
+
 // PUT /invitations/:token — accepter/refuser (authentification requise)
 router.put("/:token", requireAuth, async (req, res) => {
   try {
@@ -273,68 +326,20 @@ router.put("/:token", requireAuth, async (req, res) => {
     const invitation = await db.collection("invitations").findOne({ token });
     if (!invitation) return res.status(404).json({ error: "Invitation introuvable" });
 
+    let result;
     if (invitation.type === "link") {
       if (action === "decline") return res.json({ success: true, status: "declined" });
-
-      if (invitation.expiresAt && new Date() > invitation.expiresAt) {
-        return res.status(400).json({ error: "Ce lien d'invitation a expiré" });
-      }
-
-      const trip = await db.collection("trips").findOne({ _id: new ObjectId(invitation.tripId) });
-      if (!trip) return res.status(404).json({ error: "Voyage introuvable" });
-
-      const alreadyCollab = trip.collaborators.some((c) => c.userId === userId);
-      if (alreadyCollab || trip.ownerId === userId) {
-        return res.json({ success: true, status: "accepted", message: "Déjà membre" });
-      }
-
-      await db.collection("invitations").updateOne({ _id: invitation._id }, { $inc: { usageCount: 1 } });
-
-      const linkPerms = invitation.permissions || { role: "editor", canEdit: true, canInvite: false, canDelete: false };
-      await db.collection("trips").updateOne(
-        { _id: new ObjectId(invitation.tripId) },
-        { $push: { collaborators: { userId, role: linkPerms.role, joinedAt: new Date(), permissions: linkPerms, invitedBy: invitation.inviterId } } }
-      );
-
-      return res.json({ success: true, status: "accepted" });
+      result = await acceptLinkInvitation(db, invitation, userId);
+    } else {
+      result = await handleDirectInvitation(db, invitation, req.user, userId, action);
     }
 
-    if (new Date() > invitation.expiresAt) {
-      await db.collection("invitations").updateOne({ _id: invitation._id }, { $set: { status: "expired" } });
-      return res.status(400).json({ error: "Invitation expirée" });
-    }
-
-    if (invitation.status !== "pending") {
-      return res.status(400).json({ error: "Invitation déjà traitée" });
-    }
-
-    if (action === "accept") {
-      const emailMatch = invitation.inviteeEmailHash && req.user.emailHash === invitation.inviteeEmailHash;
-      const phoneMatch = invitation.inviteePhoneHash && req.user.phoneHash === invitation.inviteePhoneHash;
-      if (!emailMatch && !phoneMatch) {
-        return res.status(403).json({ error: "Cette invitation ne vous est pas destinée" });
-      }
-    }
-
-    const newStatus = action === "accept" ? "accepted" : "declined";
-
-    if (action === "accept") {
-      const permissions = invitation.permissions || { role: "editor", canEdit: true, canInvite: false, canDelete: false };
-      await db.collection("trips").updateOne(
-        { _id: new ObjectId(invitation.tripId) },
-        { $push: { collaborators: { userId, role: permissions.role, joinedAt: new Date(), permissions, invitedBy: invitation.inviterId } } }
-      );
-    }
-
-    await db.collection("invitations").updateOne(
-      { _id: invitation._id },
-      { $set: { status: newStatus, respondedAt: new Date() } }
-    );
-
-    return res.json({ success: true, status: newStatus });
+    return res.json(result);
   } catch (e) {
+    const status = e.status || 500;
+    const message = status === 500 ? "Erreur interne du serveur" : e.message;
     logger.error("[invitations]", e.message);
-    return res.status(500).json({ error: "Erreur interne du serveur" });
+    return res.status(status).json({ error: message });
   }
 });
 
