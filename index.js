@@ -39,8 +39,18 @@ const app = express();
 app.set("trust proxy", 1);
 
 // ─── Sécurité ─────────────────────────────────────────────────────────────────
-app.use(helmet());
-app.use(helmet.hsts({ maxAge: 31536000, includeSubDomains: true, preload: true }));
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'none'"],
+      styleSrc: ["'unsafe-inline'"],
+      imgSrc: ["'self'", "data:"],
+      formAction: ["'none'"],
+    },
+  },
+  hsts: { maxAge: 31536000, includeSubDomains: true, preload: true },
+}));
 
 const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS?.split(",").map((o) => o.trim()) ?? [];
 if (ALLOWED_ORIGINS.length === 0 && process.env.NODE_ENV === "production") {

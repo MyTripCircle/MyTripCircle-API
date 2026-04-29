@@ -113,14 +113,17 @@ router.get("/textsearch", requireAuth, async (req, res) => {
 // GET /places/photo — proxy public (la photo_reference expire, pas besoin d'auth)
 router.get("/photo", async (req, res) => {
   try {
-    const { ref, maxwidth = "800" } = req.query;
+    const { ref } = req.query;
     if (!ref || typeof ref !== "string") {
       return res.status(400).json({ error: "ref requis" });
     }
 
+    const rawMaxwidth = Number.parseInt(req.query.maxwidth) || 800;
+    const maxwidth = Math.min(Math.max(rawMaxwidth, 100), 1600).toString();
+
     const params = new URLSearchParams({
       photoreference: ref,
-      maxwidth: String(maxwidth),
+      maxwidth,
       key: GOOGLE_PLACES_API_KEY,
     });
 
