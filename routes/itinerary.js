@@ -58,8 +58,12 @@ router.post("/generate", requireAuth, async (req, res) => {
 
     if (cached) return res.json({ cached: true, itinerary: cached.itinerary });
 
-    const cityClean = city.trim().replaceAll(/["\\\n\r]/g, " ");
-    const prompt = `Génère un itinéraire de voyage pour la ville "${cityClean}" sur ${daysInt} jour(s).
+    const CITY_RE = /^[\p{L}\p{N}\s\-.',()]{1,100}$/u;
+    if (!CITY_RE.test(city.trim())) {
+      return res.status(400).json({ error: "invalid_city" });
+    }
+
+    const systemPrompt = `Tu génères uniquement des itinéraires de voyage au format JSON.
 Réponds UNIQUEMENT avec un objet JSON valide respectant EXACTEMENT cette structure :
 {
   "city": "nom de la ville",
@@ -73,7 +77,7 @@ Réponds UNIQUEMENT avec un objet JSON valide respectant EXACTEMENT cette struct
     }
   ]
 }
-Le champ "place" doit être le nom précis du lieu principal de l'activité, tel qu'il apparaîtrait sur Google Maps (ex: "Musée d'Orsay", "Sagrada Família", "Central Park"). Rédige en français. Ne mets rien avant ou après le JSON.`;
+Le champ "place" doit être le nom précis du lieu principal de l'activité, tel qu'il apparaîtrait sur Google Maps. Rédige en français. Ne mets rien avant ou après le JSON.`;
 
     const groqRes = await fetch("https://api.groq.com/openai/v1/chat/completions", {
       method: "POST",
@@ -83,7 +87,10 @@ Le champ "place" doit être le nom précis du lieu principal de l'activité, tel
       },
       body: JSON.stringify({
         model: "llama-3.3-70b-versatile",
-        messages: [{ role: "user", content: prompt }],
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: `Ville : ${city.trim()}, Jours : ${daysInt}` },
+        ],
         temperature: 0.7,
         response_format: { type: "json_object" },
       }),

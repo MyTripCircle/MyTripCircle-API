@@ -175,7 +175,7 @@ router.get("/token/:token", async (req, res) => {
     return res.json({
       ...invitation,
       trip: trip ? { _id: trip._id, title: trip.title, destination: trip.destination, startDate: trip.startDate, endDate: trip.endDate, coverImage: trip.coverImage, description: trip.description } : null,
-      inviter: inviter ? { _id: inviter._id, name: inviter.name ? decrypt(inviter.name) : null, email: inviter.email ? decrypt(inviter.email) : null, avatar: inviter.avatar } : null,
+      inviter: inviter ? { _id: inviter._id, name: inviter.name ? decrypt(inviter.name) : null, avatar: inviter.avatar } : null,
     });
   } catch (e) {
     logger.error("[invitations]", e.message);
@@ -247,6 +247,7 @@ router.post("/trip-link/:tripId", requireAuth, async (req, res) => {
       token,
       permissions: { role: "editor", canEdit: true, canInvite: false, canDelete: false },
       createdAt: new Date(),
+      expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
       usageCount: 0,
     });
 
@@ -275,6 +276,10 @@ router.put("/:token", requireAuth, async (req, res) => {
     if (invitation.type === "link") {
       if (action === "decline") return res.json({ success: true, status: "declined" });
 
+      if (invitation.expiresAt && new Date() > invitation.expiresAt) {
+        return res.status(400).json({ error: "Ce lien d'invitation a expiré" });
+      }
+
       const trip = await db.collection("trips").findOne({ _id: new ObjectId(invitation.tripId) });
       if (!trip) return res.status(404).json({ error: "Voyage introuvable" });
 
@@ -301,6 +306,14 @@ router.put("/:token", requireAuth, async (req, res) => {
 
     if (invitation.status !== "pending") {
       return res.status(400).json({ error: "Invitation déjà traitée" });
+    }
+
+    if (action === "accept") {
+      const emailMatch = invitation.inviteeEmailHash && req.user.emailHash === invitation.inviteeEmailHash;
+      const phoneMatch = invitation.inviteePhoneHash && req.user.phoneHash === invitation.inviteePhoneHash;
+      if (!emailMatch && !phoneMatch) {
+        return res.status(403).json({ error: "Cette invitation ne vous est pas destinée" });
+      }
     }
 
     const newStatus = action === "accept" ? "accepted" : "declined";

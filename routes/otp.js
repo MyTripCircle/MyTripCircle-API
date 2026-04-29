@@ -5,6 +5,7 @@ const logger = require("../utils/logger");
 const { getDb } = require("../db");
 const { authLimiter } = require("../middleware/rateLimiter");
 const { sendPasswordResetEmail } = require("../utils/email");
+const { hashField } = require("../utils/crypto");
 const {
   OTP_EXPIRY_MS,
   trimIfString,
@@ -46,7 +47,7 @@ router.post("/forgot-password", authLimiter, async (req, res) => {
 
     if (!email) return res.status(400).json({ success: false, error: "Email requis" });
 
-    const user = await db.collection("users").findOne({ email });
+    const user = await db.collection("users").findOne({ emailHash: hashField(email) });
     // Réponse identique que l'utilisateur existe ou non (anti-énumération d'emails)
     if (!user) {
       return res.json({ success: true, message: "Si un compte existe, un lien a été envoyé" });

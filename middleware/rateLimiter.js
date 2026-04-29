@@ -41,4 +41,19 @@ const searchLimiter = rateLimit({
   message: { success: false, error: "Trop de recherches. Réessayez dans une minute." },
 });
 
-module.exports = { authLimiter, generalLimiter, searchLimiter };
+// Limite stricte pour les endpoints de validation IAP (anti-fraude)
+// 10 validations par heure par utilisateur authentifié
+const iapLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => {
+    const userId = req.user?._id ? String(req.user._id) : null;
+    return userId || req.ip || "unknown";
+  },
+  validate: { keyGeneratorIpFallback: false },
+  message: { success: false, error: "Trop de tentatives de validation. Réessayez dans une heure." },
+});
+
+module.exports = { authLimiter, generalLimiter, searchLimiter, iapLimiter };

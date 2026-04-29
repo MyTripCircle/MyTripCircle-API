@@ -54,6 +54,12 @@ async function _ensureIndexes() {
     logger.error("[db] Erreur lors de la création des index itinerary_usage :", err.message);
   }
 
+  try {
+    await db.collection("users").createIndex({ calendarToken: 1 }, { sparse: true });
+  } catch (err) {
+    logger.error("[db] Erreur lors de la création de l'index users.calendarToken :", err.message);
+  }
+
   // RGPD Art. 5(f) — Audit logs : TTL 1 an + index userId pour audit ciblé
   try {
     await db.collection("auditLogs").createIndex(

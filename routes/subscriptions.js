@@ -2,6 +2,7 @@ const express = require("express");
 const https = require("node:https");
 const { getDb } = require("../db");
 const { requireAuth } = require("../middleware/auth");
+const { iapLimiter } = require("../middleware/rateLimiter");
 const logger = require("../utils/logger");
 const { FREE_FEATURES } = require("../utils/subscriptionHelper");
 
@@ -133,7 +134,11 @@ async function validateAndPersist({ userId, receiptData, platform, productId, tr
     endDate = result.endDate;
     resolvedTransactionId = result.resolvedTransactionId;
   } else {
-    // Android : à implémenter via Google Play Developer API
+    if (process.env.IAP_SKIP_VALIDATION !== "true") {
+      throw new Error("Validation Google Play non implémentée — achats Android refusés en production");
+    }
+    // Android dev uniquement (IAP_SKIP_VALIDATION=true) : bypass sans vérification Google Play
+    logger.warn(`[subscriptions] IAP_SKIP_VALIDATION actif — validation Google Play ignorée pour userId=${userId}`);
     const durationMs = PLAN_DURATIONS_MS[productId];
     if (!durationMs) throw new Error(`ProductId inconnu : ${productId}`);
     endDate = new Date(now.getTime() + durationMs);
@@ -203,7 +208,7 @@ router.get("/me", requireAuth, async (req, res) => {
 });
 
 // POST /subscriptions/validate-receipt — appelé par useSubscriptionIap après achat
-router.post("/validate-receipt", requireAuth, async (req, res) => {
+router.post("/validate-receipt", requireAuth, iapLimiter, async (req, res) => {
   try {
     const userId = String(req.user._id);
     const { receipt, platform, productId } = req.body;
@@ -228,7 +233,7 @@ router.post("/validate-receipt", requireAuth, async (req, res) => {
 });
 
 // POST /subscriptions/validate — appelé par SubscriptionContext.purchaseSubscription()
-router.post("/validate", requireAuth, async (req, res) => {
+router.post("/validate", requireAuth, iapLimiter, async (req, res) => {
   try {
     const userId = String(req.user._id);
     const { receiptData, platform, productId, transactionId } = req.body;
