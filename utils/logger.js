@@ -5,7 +5,7 @@ function sanitize(...args) {
   return args.map((a) => {
     let s = String(a).replaceAll(/[\r\n]/g, " ");
     if (IS_PROD) {
-      s = s.replace(/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g, "[email]");
+      s = s.replaceAll(/[^\s@"'<>]+@[^\s@"'<>.]+\.[a-zA-Z]{2,}/g, "[email]");
     }
     return s;
   });
