@@ -27,6 +27,18 @@ const COLORS = {
   white: "#FFFFFF",
 };
 
+// ─── Sécurité HTML ────────────────────────────────────────────────────────────
+
+function escapeHtml(str) {
+  if (typeof str !== "string") return String(str ?? "");
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 // ─── Composants HTML ──────────────────────────────────────────────────────────
 
 const EMAIL_HEADER = `
@@ -135,13 +147,13 @@ async function sendFriendRequestEmail(to, senderName, lang = "fr") {
     ? {
         subject: "Nouvelle demande d'ami sur MyTripCircle",
         title: "Nouvelle demande d'ami !",
-        body: `👋 ${bold(senderName)} souhaite vous ajouter en ami sur MyTripCircle.`,
+        body: `👋 ${bold(escapeHtml(senderName))} souhaite vous ajouter en ami sur MyTripCircle.`,
         footer: "Ouvrez l'application MyTripCircle pour répondre.",
       }
     : {
         subject: "New friend request on MyTripCircle",
         title: "New friend request!",
-        body: `👋 ${bold(senderName)} wants to add you as a friend on MyTripCircle.`,
+        body: `👋 ${bold(escapeHtml(senderName))} wants to add you as a friend on MyTripCircle.`,
         footer: "Open the MyTripCircle app to respond.",
       };
   const html = wrap(
@@ -158,13 +170,13 @@ async function sendFriendRequestFoundEmail(to, newUserName, lang = "fr") {
     ? {
         subject: "Votre demande d'ami a été trouvée !",
         title: "Bonne nouvelle !",
-        line1: `🎉 ${bold(newUserName)} vient de s'inscrire sur MyTripCircle.`,
+        line1: `🎉 ${bold(escapeHtml(newUserName))} vient de s'inscrire sur MyTripCircle.`,
         line2: "La demande d'ami que vous avez envoyée est maintenant visible dans leur application !",
       }
     : {
         subject: "Your friend request has been found!",
         title: "Great news!",
-        line1: `🎉 ${bold(newUserName)} just signed up on MyTripCircle.`,
+        line1: `🎉 ${bold(escapeHtml(newUserName))} just signed up on MyTripCircle.`,
         line2: "The friend request you sent is now visible in their app!",
       };
   const html = wrap(
@@ -185,13 +197,13 @@ async function sendTripInvitationEmail(
 
   const msgBlock = message
     ? `<div style="background: ${COLORS.terraLight}; padding: 16px; border-radius: 8px; margin: 0 0 20px;">
-         <p style="color: ${COLORS.inkMid}; font-style: italic; margin: 0; font-size: 14px;">"${message}"</p>
+         <p style="color: ${COLORS.inkMid}; font-style: italic; margin: 0; font-size: 14px;">"${escapeHtml(message)}"</p>
        </div>`
     : "";
 
   const tripCard = infoCard(
-    `<h3 style="color: ${COLORS.terra}; margin: 0 0 12px 0; font-family: Georgia, 'Times New Roman', serif; font-size: 18px;">${tripTitle}</h3>` +
-    cardLine(`📍 ${tripDestination}`, { size: 14, marginBottom: 6 }) +
+    `<h3 style="color: ${COLORS.terra}; margin: 0 0 12px 0; font-family: Georgia, 'Times New Roman', serif; font-size: 18px;">${escapeHtml(tripTitle)}</h3>` +
+    cardLine(`📍 ${escapeHtml(tripDestination)}`, { size: 14, marginBottom: 6 }) +
     cardLine(`📅 ${startFmt} → ${endFmt}`, { size: 14 }),
     COLORS.terra
   );
@@ -201,14 +213,14 @@ async function sendTripInvitationEmail(
     ? {
         subject: "Invitation à rejoindre un voyage sur MyTripCircle",
         title: "Vous avez été invité à un voyage !",
-        intro: `${bold(inviterName)} vous a invité à rejoindre le voyage :`,
+        intro: `${bold(escapeHtml(inviterName))} vous a invité à rejoindre le voyage :`,
         cta: "Accepter l'invitation",
         expiry: "⏱ Cette invitation expire dans 7 jours.",
       }
     : {
         subject: "You've been invited to join a trip on MyTripCircle",
         title: "You've been invited to a trip!",
-        intro: `${bold(inviterName)} has invited you to join:`,
+        intro: `${bold(escapeHtml(inviterName))} has invited you to join:`,
         cta: "Accept the invitation",
         expiry: "⏱ This invitation expires in 7 days.",
       };
@@ -238,8 +250,8 @@ async function sendDataExportEmail(to, exportData) {
       Suite à votre demande de suppression de compte, voici l'intégralité de vos données personnelles au format JSON.
     </p>
     ${infoCard(`
-      ${cardLine(`👤 Nom : ${bold(profile.name || "—")}`, { size: 14, marginBottom: 6 })}
-      ${cardLine(`✉️ Email : ${bold(profile.email || "—")}`, { size: 14, marginBottom: 6 })}
+      ${cardLine(`👤 Nom : ${bold(escapeHtml(profile.name || "—"))}`, { size: 14, marginBottom: 6 })}
+      ${cardLine(`✉️ Email : ${bold(escapeHtml(profile.email || "—"))}`, { size: 14, marginBottom: 6 })}
       ${cardLine(`🌍 Voyages : ${bold(String(tripsCount))}`, { size: 14, marginBottom: 6 })}
       ${cardLine(`🎫 Réservations : ${bold(String(bookingsCount))}`, { size: 14, marginBottom: 6 })}
       ${cardLine(`📍 Adresses : ${bold(String(addressesCount))}`, { size: 14, marginBottom: 6 })}
@@ -262,7 +274,7 @@ async function sendDataExportEmail(to, exportData) {
 async function sendFriendJoinedEmail(to, newFriendName) {
   const html = wrap(
     heading("Nouvel ami !") +
-    `<p style="color: ${COLORS.inkMid}; font-size: 15px; margin: 0 0 16px;">${bold(newFriendName)} a accepté votre invitation et est maintenant votre ami sur MyTripCircle.</p>` +
+    `<p style="color: ${COLORS.inkMid}; font-size: 15px; margin: 0 0 16px;">${bold(escapeHtml(newFriendName))} a accepté votre invitation et est maintenant votre ami sur MyTripCircle.</p>` +
     infoCard(cardLine("🌍 Commencez à partager vos voyages ensemble !", { size: 14 }))
   );
   return _send(to, `${newFriendName} a rejoint vos amis sur MyTripCircle`, html);
