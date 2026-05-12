@@ -49,21 +49,24 @@ async function verifyAppleToken(identityToken) {
 
 // POST /users/google
 router.post("/google", authLimiter, async (req, res) => {
-  const { accessToken } = req.body;
-  if (!accessToken) return res.status(400).json({ success: false, error: "accessToken manquant" });
+  const { accessToken, mode = "register" } = req.body;
+  if (!accessToken) return res.status(400).json({ success: false, error: "Missing accessToken" });
 
   try {
     const db = getDb();
     const googleRes = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
       headers: { Authorization: `Bearer ${accessToken}` },
     });
-    if (!googleRes.ok) return res.status(401).json({ success: false, error: "Token Google invalide" });
+    if (!googleRes.ok) return res.status(401).json({ success: false, error: "Invalid Google token" });
 
     const { sub: googleId, email, name, picture } = await googleRes.json();
-    if (!email) return res.status(400).json({ success: false, error: "Aucun email retourné par Google" });
+    if (!email) return res.status(400).json({ success: false, error: "No email returned from Google" });
 
     let user = await db.collection("users").findOne({ $or: [{ googleId }, { emailHash: hashField(email) }] });
     if (!user) {
+      if (mode === "login") {
+        return res.status(404).json({ success: false, error: "No Google account found. Please sign up first." });
+      }
       const result = await db.collection("users").insertOne(
         encryptUserFields({
           name: name || email.split("@")[0],
@@ -75,23 +78,26 @@ router.post("/google", authLimiter, async (req, res) => {
         })
       );
       user = await db.collection("users").findOne({ _id: result.insertedId });
+      const token = signAccessToken(user._id);
+      const refreshToken = await createRefreshToken(db, user._id);
+      return res.json({ success: true, token, refreshToken, user: sanitizeUser(user), isNewUser: true });
     } else if (!user.googleId) {
       await db.collection("users").updateOne({ _id: user._id }, { $set: { googleId } });
     }
 
     const token = signAccessToken(user._id);
     const refreshToken = await createRefreshToken(db, user._id);
-    return res.json({ success: true, token, refreshToken, user: sanitizeUser(user) });
+    return res.json({ success: true, token, refreshToken, user: sanitizeUser(user), isNewUser: false });
   } catch (e) {
     logger.error("[auth/google] Erreur d'authentification", e.message);
-    return res.status(500).json({ success: false, error: "Authentification Google échouée" });
+    return res.status(500).json({ success: false, error: "Google authentication failed" });
   }
 });
 
 // POST /users/apple
 router.post("/apple", authLimiter, async (req, res) => {
-  const { identityToken, email, fullName } = req.body;
-  if (!identityToken) return res.status(400).json({ success: false, error: "identityToken manquant" });
+  const { identityToken, email, fullName, mode = "register" } = req.body;
+  if (!identityToken) return res.status(400).json({ success: false, error: "Missing identityToken" });
 
   try {
     const db = getDb();
@@ -101,11 +107,11 @@ router.post("/apple", authLimiter, async (req, res) => {
       payload = await verifyAppleToken(identityToken);
     } catch (e) {
       logger.error("[auth/apple] Vérification du token échouée", e.message);
-      return res.status(401).json({ success: false, error: "Token Apple invalide" });
+      return res.status(401).json({ success: false, error: "Invalid Apple token" });
     }
 
     const { sub: appleId, email: tokenEmail } = payload;
-    if (!appleId) return res.status(401).json({ success: false, error: "Token Apple invalide" });
+    if (!appleId) return res.status(401).json({ success: false, error: "Invalid Apple token" });
 
     const userEmail = email || tokenEmail || null;
     const fallbackName = userEmail ? userEmail.split("@")[0] : "User";
@@ -117,6 +123,9 @@ router.post("/apple", authLimiter, async (req, res) => {
       $or: [{ appleId }, ...(userEmail ? [{ emailHash: hashField(userEmail) }] : [])],
     });
     if (!user) {
+      if (mode === "login") {
+        return res.status(404).json({ success: false, error: "No Apple account found. Please sign up first." });
+      }
       const result = await db.collection("users").insertOne(
         encryptUserFields({
           name: userName || "User",
@@ -127,16 +136,19 @@ router.post("/apple", authLimiter, async (req, res) => {
         })
       );
       user = await db.collection("users").findOne({ _id: result.insertedId });
+      const token = signAccessToken(user._id);
+      const refreshToken = await createRefreshToken(db, user._id);
+      return res.json({ success: true, token, refreshToken, user: sanitizeUser(user), isNewUser: true });
     } else if (!user.appleId) {
       await db.collection("users").updateOne({ _id: user._id }, { $set: { appleId } });
     }
 
     const token = signAccessToken(user._id);
     const refreshToken = await createRefreshToken(db, user._id);
-    return res.json({ success: true, token, refreshToken, user: sanitizeUser(user) });
+    return res.json({ success: true, token, refreshToken, user: sanitizeUser(user), isNewUser: false });
   } catch (e) {
     logger.error("[auth/apple] Erreur d'authentification", e.message);
-    return res.status(500).json({ success: false, error: "Authentification Apple échouée" });
+    return res.status(500).json({ success: false, error: "Apple authentication failed" });
   }
 });
 
