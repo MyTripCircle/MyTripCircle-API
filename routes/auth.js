@@ -81,7 +81,7 @@ router.post("/register", authLimiter, async (req, res) => {
         name,
         email,
         password: passwordHash,
-        phone,
+        ...(phone ? { phone } : {}),
         otp,
         otpExpiresAt: new Date(Date.now() + OTP_EXPIRY_MS),
         verified: false,

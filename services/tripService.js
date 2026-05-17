@@ -28,11 +28,37 @@ async function checkTripWriteAccess(db, tripId, userId) {
   return { trip, hasAccess: isOwner || isCollaborator };
 }
 
+async function enrichTripsWithStats(trips, db) {
+  if (trips.length === 0) return trips;
+  const tripIds = trips.map((t) => t._id.toString());
+  const [bookingCounts, addressCounts] = await Promise.all([
+    db.collection("bookings").aggregate([
+      { $match: { tripId: { $in: tripIds } } },
+      { $group: { _id: "$tripId", count: { $sum: 1 } } },
+    ]).toArray(),
+    db.collection("addresses").aggregate([
+      { $match: { tripId: { $in: tripIds } } },
+      { $group: { _id: "$tripId", count: { $sum: 1 } } },
+    ]).toArray(),
+  ]);
+  const bookingMap = new Map(bookingCounts.map((b) => [b._id, b.count]));
+  const addressMap = new Map(addressCounts.map((a) => [a._id, a.count]));
+  return trips.map((t) => ({
+    ...t,
+    stats: {
+      totalBookings: bookingMap.get(t._id.toString()) ?? 0,
+      totalAddresses: addressMap.get(t._id.toString()) ?? 0,
+      totalCollaborators: t.collaborators?.length ?? 0,
+    },
+  }));
+}
+
 async function getTripsForUser(userId) {
   const db = getDb();
-  return db.collection("trips").find({
+  const trips = await db.collection("trips").find({
     $or: [{ ownerId: userId }, { "collaborators.userId": userId }],
   }).toArray();
+  return enrichTripsWithStats(trips, db);
 }
 
 async function getTripById(tripId, userId) {
@@ -40,7 +66,8 @@ async function getTripById(tripId, userId) {
   const { trip, hasAccess } = await checkTripReadAccess(db, tripId, userId);
   if (!trip) return { error: "Voyage introuvable", status: 404 };
   if (!hasAccess) return { error: "Accès refusé", status: 403 };
-  return { trip };
+  const [enriched] = await enrichTripsWithStats([trip], db);
+  return { trip: enriched };
 }
 
 async function createTrip(data, userId) {

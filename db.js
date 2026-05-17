@@ -100,12 +100,14 @@ async function _updateUsersValidator() {
     const info = infos[0];
     const schema = info?.options?.validator?.$jsonSchema;
 
-    if (schema?.properties && !schema.properties.phone) {
+    const phoneSchema = schema?.properties?.phone;
+    const phoneAllowsNull = Array.isArray(phoneSchema?.bsonType) && phoneSchema.bsonType.includes("null");
+    if (schema?.properties && (!phoneSchema || !phoneAllowsNull)) {
       const nextSchema = {
         ...schema,
         properties: {
           ...schema.properties,
-          phone: { bsonType: "string" },
+          phone: { bsonType: ["string", "null"] },
         },
       };
 
