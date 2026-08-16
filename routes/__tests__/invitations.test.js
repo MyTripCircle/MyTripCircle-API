@@ -458,7 +458,7 @@ describe("invitations router", () => {
 
     it("should return 404 when the trip behind the link no longer exists", async () => {
       // Arrange
-      mockFakeDb.col("invitations").findOne.mockResolvedValue({ type: "link", expiresAt: FUTURE() });
+      mockFakeDb.col("invitations").findOne.mockResolvedValue({ type: "link", tripId: TRIP_ID, expiresAt: FUTURE() });
       mockFakeDb.col("trips").findOne.mockResolvedValue(null);
 
       // Act
@@ -470,7 +470,7 @@ describe("invitations router", () => {
 
     it("should be idempotent when the user is already a member of the trip", async () => {
       // Arrange
-      mockFakeDb.col("invitations").findOne.mockResolvedValue({ type: "link", expiresAt: FUTURE() });
+      mockFakeDb.col("invitations").findOne.mockResolvedValue({ type: "link", tripId: TRIP_ID, expiresAt: FUTURE() });
       mockFakeDb.col("trips").findOne.mockResolvedValue(buildTrip());
 
       // Act
