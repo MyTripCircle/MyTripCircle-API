@@ -298,7 +298,7 @@ router.post("/batch", requireAuth, searchLimiter, async (req, res) => {
     }
 
     const objectIds = ids
-      .map((id) => { try { return new ObjectId(id); } catch (e) { logger.warn("[users/batch] ID invalide ignoré:", e.message); return null; } })
+      .map((id) => { try { return new ObjectId(String(id)); } catch (e) { logger.warn("[users/batch] ID invalide ignoré:", e.message); return null; } })
       .filter(Boolean);
 
     const users = await db.collection("users").find({ _id: { $in: objectIds } }).toArray();
@@ -514,7 +514,7 @@ router.post("/push-token", requireAuth, async (req, res) => {
     }
 
     await db.collection("users").updateOne(
-      { _id: new ObjectId(userId) },
+      { _id: new ObjectId(String(userId)) },
       {
         $set: {
           pushToken: token,

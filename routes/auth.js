@@ -169,7 +169,7 @@ router.post("/verify-otp", authLimiter, async (req, res) => {
       return res.status(400).json({ success: false, error: "userId et otp sont requis" });
     }
 
-    const user = await db.collection("users").findOne({ _id: new ObjectId(userId) });
+    const user = await db.collection("users").findOne({ _id: new ObjectId(String(userId)) });
     if (!user) return res.status(404).json({ success: false, error: "Utilisateur introuvable" });
 
     if (!user.otp || user.otp !== otp) {
@@ -181,13 +181,13 @@ router.post("/verify-otp", authLimiter, async (req, res) => {
     }
 
     await db.collection("users").updateOne(
-      { _id: new ObjectId(userId) },
+      { _id: new ObjectId(String(userId)) },
       { $set: { verified: true, updatedAt: new Date() }, $unset: { otp: "", otpExpiresAt: "" } }
     );
 
     await linkPendingFriendRequests(userId, decrypt(user.email), user.phone ? decrypt(user.phone) : null);
 
-    const updatedUser = await db.collection("users").findOne({ _id: new ObjectId(userId) });
+    const updatedUser = await db.collection("users").findOne({ _id: new ObjectId(String(userId)) });
     const accessToken = signAccessToken(userId);
     const refreshToken = await createRefreshToken(db, userId);
     return res.json({ success: true, token: accessToken, refreshToken, user: sanitizeUser(updatedUser) });
@@ -207,7 +207,7 @@ router.post("/resend-otp", authLimiter, async (req, res) => {
 
     if (!userId) return res.status(400).json({ success: false, error: "userId est requis" });
 
-    const user = await db.collection("users").findOne({ _id: new ObjectId(userId) });
+    const user = await db.collection("users").findOne({ _id: new ObjectId(String(userId)) });
     if (!user) return res.status(404).json({ success: false, error: "Utilisateur introuvable" });
     if (user.verified) return res.status(400).json({ success: false, error: "Compte déjà vérifié" });
 
