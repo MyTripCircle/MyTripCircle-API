@@ -69,11 +69,11 @@ function validateAddressUpdate({ type, name, address, city, country, rating, web
 }
 
 async function checkEditAccess(db, id, userId) {
-  const existing = await db.collection("addresses").findOne({ _id: new ObjectId(id) });
+  const existing = await db.collection("addresses").findOne({ _id: new ObjectId(String(id)) });
   if (!existing) return { status: 404, error: "Adresse introuvable" };
   if (existing.userId === userId) return { existing };
   if (existing.tripId) {
-    const trip = await db.collection("trips").findOne({ _id: new ObjectId(existing.tripId) });
+    const trip = await db.collection("trips").findOne({ _id: new ObjectId(String(existing.tripId)) });
     const canEdit =
       trip &&
       (trip.ownerId === userId ||
@@ -98,7 +98,7 @@ async function getAddressesForUser(userId) {
 
 async function getAddressesByTripId(tripId, userId) {
   const db = getDb();
-  const trip = await db.collection("trips").findOne({ _id: new ObjectId(tripId) });
+  const trip = await db.collection("trips").findOne({ _id: new ObjectId(String(tripId)) });
   if (!trip) return { error: "Voyage introuvable", status: 404 };
 
   const isOwner        = trip.ownerId === userId;
@@ -120,12 +120,12 @@ async function getAddressesByTripId(tripId, userId) {
 
 async function getAddressById(id, userId) {
   const db = getDb();
-  const item = await db.collection("addresses").findOne({ _id: new ObjectId(id) });
+  const item = await db.collection("addresses").findOne({ _id: new ObjectId(String(id)) });
   if (!item) return { error: "Adresse introuvable", status: 404 };
 
   const isOwner = item.userId === userId;
   if (!isOwner && item.tripId) {
-    const trip = await db.collection("trips").findOne({ _id: new ObjectId(item.tripId) });
+    const trip = await db.collection("trips").findOne({ _id: new ObjectId(String(item.tripId)) });
     const hasTripAccess =
       trip &&
       (trip.ownerId === userId || trip.collaborators?.some((c) => c.userId === userId));
@@ -192,19 +192,19 @@ async function updateAddress(id, data, userId) {
   if (Object.keys(setData).length > 0)   updatePayload.$set   = setData;
   if (Object.keys(unsetData).length > 0) updatePayload.$unset = unsetData;
 
-  await db.collection("addresses").updateOne({ _id: new ObjectId(id) }, updatePayload);
-  const updated = await db.collection("addresses").findOne({ _id: new ObjectId(id) });
+  await db.collection("addresses").updateOne({ _id: new ObjectId(String(id)) }, updatePayload);
+  const updated = await db.collection("addresses").findOne({ _id: new ObjectId(String(id)) });
   return { item: decryptAddressFields(updated) };
 }
 
 async function deleteAddress(id, userId) {
   const db = getDb();
-  const address = await db.collection("addresses").findOne({ _id: new ObjectId(id) });
+  const address = await db.collection("addresses").findOne({ _id: new ObjectId(String(id)) });
   if (!address) return { error: "Adresse introuvable", status: 404 };
 
   const isCreator = address.userId === userId;
   if (!isCreator && address.tripId) {
-    const trip = await db.collection("trips").findOne({ _id: new ObjectId(address.tripId) });
+    const trip = await db.collection("trips").findOne({ _id: new ObjectId(String(address.tripId)) });
     const canDelete =
       trip &&
       (trip.ownerId === userId ||
@@ -214,7 +214,7 @@ async function deleteAddress(id, userId) {
     return { error: "Accès refusé", status: 403 };
   }
 
-  await db.collection("addresses").deleteOne({ _id: new ObjectId(id) });
+  await db.collection("addresses").deleteOne({ _id: new ObjectId(String(id)) });
   return { success: true };
 }
 

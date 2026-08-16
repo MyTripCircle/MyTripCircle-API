@@ -73,7 +73,7 @@ function buildInvitationDoc(tripId, inviterId, { inviteeEmail, inviteePhone, tok
 async function maybeSendInvitationEmail(db, inviteeEmail, inviterId, trip, token, message) {
   if (!inviteeEmail) return;
   const [inviter, inviteeUser] = await Promise.all([
-    db.collection("users").findOne({ _id: new ObjectId(inviterId) }),
+    db.collection("users").findOne({ _id: new ObjectId(String(inviterId)) }),
     db.collection("users").findOne({ emailHash: hashField(inviteeEmail) }),
   ]);
   await sendTripInvitationEmail(inviteeEmail, {
@@ -100,7 +100,7 @@ router.post("/", requireAuth, async (req, res) => {
       return res.status(400).json({ error: "Email ou numéro de téléphone requis" });
     }
 
-    const trip = await db.collection("trips").findOne({ _id: new ObjectId(tripId) });
+    const trip = await db.collection("trips").findOne({ _id: new ObjectId(String(tripId)) });
     if (!trip) return res.status(404).json({ error: "Voyage introuvable" });
 
     assertInviterCanInvite(trip, inviterId);
@@ -145,8 +145,8 @@ router.get("/user/:email", requireAuth, async (req, res) => {
 
     const enriched = await Promise.all(
       invitations.map(async (inv) => {
-        const trip = await db.collection("trips").findOne({ _id: new ObjectId(inv.tripId) });
-        const inviter = await db.collection("users").findOne({ _id: new ObjectId(inv.inviterId) });
+        const trip = await db.collection("trips").findOne({ _id: new ObjectId(String(inv.tripId)) });
+        const inviter = await db.collection("users").findOne({ _id: new ObjectId(String(inv.inviterId)) });
         return {
           ...inv,
           trip: trip ? { _id: trip._id, title: trip.title, destination: trip.destination, startDate: trip.startDate, endDate: trip.endDate } : null,
@@ -169,8 +169,8 @@ router.get("/token/:token", requireAuth, async (req, res) => {
     const invitation = await db.collection("invitations").findOne({ token: req.params.token });
     if (!invitation) return res.status(404).json({ error: "Invitation introuvable" });
 
-    const trip = await db.collection("trips").findOne({ _id: new ObjectId(invitation.tripId) });
-    const inviter = await db.collection("users").findOne({ _id: new ObjectId(invitation.inviterId) });
+    const trip = await db.collection("trips").findOne({ _id: new ObjectId(String(invitation.tripId)) });
+    const inviter = await db.collection("users").findOne({ _id: new ObjectId(String(invitation.inviterId)) });
 
     return res.json({
       ...invitation,
@@ -197,7 +197,7 @@ router.get("/sent", requireAuth, async (req, res) => {
 
     const enriched = await Promise.all(
       invitations.map(async (inv) => {
-        const trip = await db.collection("trips").findOne({ _id: new ObjectId(inv.tripId) });
+        const trip = await db.collection("trips").findOne({ _id: new ObjectId(String(inv.tripId)) });
         return {
           ...inv,
           trip: trip ? { _id: trip._id, title: trip.title, destination: trip.destination, startDate: trip.startDate, endDate: trip.endDate } : null,
@@ -220,7 +220,7 @@ router.post("/trip-link/:tripId", requireAuth, async (req, res) => {
     const { tripId } = req.params;
     const { force } = req.body;
 
-    const trip = await db.collection("trips").findOne({ _id: new ObjectId(tripId) });
+    const trip = await db.collection("trips").findOne({ _id: new ObjectId(String(tripId)) });
     if (!trip) return res.status(404).json({ error: "Voyage introuvable" });
 
     const isOwner = trip.ownerId === inviterId;
@@ -265,7 +265,7 @@ async function acceptLinkInvitation(db, invitation, userId) {
     throw httpError("Ce lien d'invitation a expiré", 400);
   }
 
-  const trip = await db.collection("trips").findOne({ _id: new ObjectId(invitation.tripId) });
+  const trip = await db.collection("trips").findOne({ _id: new ObjectId(String(invitation.tripId)) });
   if (!trip) throw httpError("Voyage introuvable", 404);
 
   const alreadyMember = trip.collaborators.some((c) => c.userId === userId) || trip.ownerId === userId;
@@ -275,7 +275,7 @@ async function acceptLinkInvitation(db, invitation, userId) {
 
   const perms = invitation.permissions || { role: "editor", canEdit: true, canInvite: false, canDelete: false };
   await db.collection("trips").updateOne(
-    { _id: new ObjectId(invitation.tripId) },
+    { _id: new ObjectId(String(invitation.tripId)) },
     { $push: { collaborators: { userId, role: perms.role, joinedAt: new Date(), permissions: perms, invitedBy: invitation.inviterId } } }
   );
 
@@ -297,7 +297,7 @@ async function handleDirectInvitation(db, invitation, user, userId, action) {
 
     const permissions = invitation.permissions || { role: "editor", canEdit: true, canInvite: false, canDelete: false };
     await db.collection("trips").updateOne(
-      { _id: new ObjectId(invitation.tripId) },
+      { _id: new ObjectId(String(invitation.tripId)) },
       { $push: { collaborators: { userId, role: permissions.role, joinedAt: new Date(), permissions, invitedBy: invitation.inviterId } } }
     );
   }
@@ -351,11 +351,11 @@ router.delete("/:id", requireAuth, async (req, res) => {
     const { id } = req.params;
 
     let inv;
-    try { inv = await db.collection("invitations").findOne({ _id: new ObjectId(id) }); } catch (e) { logger.warn("[invitations] ID invalide:", e.message); inv = null; }
+    try { inv = await db.collection("invitations").findOne({ _id: new ObjectId(String(id)) }); } catch (e) { logger.warn("[invitations] ID invalide:", e.message); inv = null; }
     if (!inv) return res.status(404).json({ error: "Invitation introuvable" });
     if (inv.inviterId !== userId) return res.status(403).json({ error: "Impossible d'annuler l'invitation d'un autre" });
 
-    await db.collection("invitations").deleteOne({ _id: new ObjectId(id) });
+    await db.collection("invitations").deleteOne({ _id: new ObjectId(String(id)) });
     return res.json({ success: true });
   } catch (e) {
     logger.error("[invitations]", e.message);

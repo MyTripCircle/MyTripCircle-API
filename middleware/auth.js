@@ -18,7 +18,7 @@ async function requireAuth(req, res, next) {
 
     const user = await getDb()
       .collection("users")
-      .findOne({ _id: new ObjectId(userId) });
+      .findOne({ _id: new ObjectId(String(userId)) });
 
     if (!user) {
       return res.status(401).json({ success: false, error: "Non autorisé" });
