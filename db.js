@@ -6,15 +6,25 @@ const TTL_ITINERARY_CACHE_S = 604800;  // 7 jours
 const TTL_ITINERARY_USAGE_S = 86400;   // 24 heures
 
 let db;
+let client;
 
 async function connectMongo() {
-  const client = new MongoClient(MONGODB_URI);
+  client = new MongoClient(MONGODB_URI);
   await client.connect();
   db = client.db(DB_NAME);
   logger.info(`[db] Connecté à MongoDB : ${DB_NAME}`);
 
   await _ensureIndexes();
   await _updateUsersValidator();
+}
+
+// Ferme la connexion (utilisé en teardown de tests pour éviter les handles ouverts).
+async function closeMongo() {
+  if (client) {
+    await client.close();
+    client = undefined;
+    db = undefined;
+  }
 }
 
 function getDb() {
@@ -125,4 +135,4 @@ async function _updateUsersValidator() {
   }
 }
 
-module.exports = { connectMongo, getDb };
+module.exports = { connectMongo, closeMongo, getDb };
