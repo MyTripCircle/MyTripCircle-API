@@ -8,6 +8,11 @@ const router = express.Router();
 
 const DAILY_LIMIT = 10;
 
+// Plafond de temps accordé au fournisseur d'inférence, aligné sur celui que le
+// niveau de service annonce pour cette route (annexe R). Au-delà, la requête est
+// interrompue et l'échec devient explicite plutôt que pendant.
+const GROQ_TIMEOUT_MS = 30_000;
+
 // POST /itinerary/generate
 router.post("/generate", requireAuth, async (req, res) => {
   try {
@@ -79,8 +84,14 @@ Réponds UNIQUEMENT avec un objet JSON valide respectant EXACTEMENT cette struct
 }
 Le champ "place" doit être le nom précis du lieu principal de l'activité, tel qu'il apparaîtrait sur Google Maps. Rédige en français. Ne mets rien avant ou après le JSON.`;
 
+    // Sans délai d'expiration explicite, un fournisseur qui accepte la connexion
+    // puis cesse de répondre laisse la requête pendante sans jamais lever
+    // d'erreur : la requête de l'utilisateur reste ouverte et mobilise de la
+    // mémoire dans un conteneur borné à 512 Mo. Le plafond retenu est celui que
+    // le niveau de service annonce pour cette route.
     const groqRes = await fetch("https://api.groq.com/openai/v1/chat/completions", {
       method: "POST",
+      signal: AbortSignal.timeout(GROQ_TIMEOUT_MS),
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${GROQ_API_KEY}`,
@@ -129,6 +140,14 @@ Le champ "place" doit être le nom précis du lieu principal de l'activité, tel
 
     return res.json({ cached: false, itinerary: parsedData });
   } catch (e) {
+    // Un dépassement du plafond n'est pas une défaillance du service : c'est le
+    // fournisseur tiers qui n'a pas répondu à temps. Le distinguer permet au
+    // client de proposer une nouvelle tentative plutôt que d'afficher une erreur
+    // interne, et de ne pas comptabiliser l'incident contre le service.
+    if (e.name === "TimeoutError" || e.name === "AbortError") {
+      logger.warn("[itinerary] Délai dépassé côté fournisseur d'inférence");
+      return res.status(504).json({ error: "ai_timeout" });
+    }
     logger.error("[itinerary]", e.message);
     return res.status(500).json({ error: "Erreur interne du serveur" });
   }
