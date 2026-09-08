@@ -1,0 +1,27 @@
+services:
+  api:
+    build: .
+    container_name: mytripcircle_api
+    env_file:
+      - .env
+    # `deploy.restart_policy` n'est honoré qu'en mode Swarm : hors Swarm, Compose
+    # l'ignore silencieusement et le conteneur ne redémarre jamais. La politique
+    # est donc déclarée au niveau du service, où elle s'applique réellement.
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "0.5"
+    networks:
+      - network_web
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.mytripcircle-api.rule=Host(`mytripcircle-api.enzo-turpin.fr`)"
+      - "traefik.http.routers.mytripcircle-api.entrypoints=websecure"
+      - "traefik.http.routers.mytripcircle-api.tls.certresolver=default"
+      - "traefik.http.services.mytripcircle-api.loadbalancer.server.port=4000"
+
+networks:
+  network_web:
+    external: true

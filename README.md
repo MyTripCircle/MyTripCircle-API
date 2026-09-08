@@ -69,6 +69,38 @@ npm run test:coverage   # avec rapport de couverture
 Les tests s'exécutent contre une base en mémoire (`mongodb-memory-server`) :
 aucune instance réelle n'est sollicitée.
 
+## Déploiement
+
+L'API tourne en conteneur derrière Traefik, qui termine TLS et route
+`mytripcircle-api.enzo-turpin.fr` vers le port 4000.
+
+```bash
+git clone https://github.com/MyTripCircle/MyTripCircle-API.git
+cd MyTripCircle-API
+cp .env.example .env    # puis renseigner les valeurs de production
+./deploy.sh             # ou ./deploy.sh develop pour déployer une autre branche
+```
+
+`deploy.sh` contrôle la présence des variables requises **avant** de reconstruire
+l'image, puis attend que `/health` réponde avant de rendre la main. Un
+déploiement qui échoue laisse donc le service précédent en place.
+
+### Points de vigilance
+
+`ENCRYPTION_KEY` et `HMAC_KEY` doivent rester identiques à celles déjà en
+service : les données personnelles en base sont chiffrées avec, une clé
+différente les rend illisibles.
+
+`ALLOWED_ORIGINS` est obligatoire en production. L'API refuse de démarrer sans
+elle, l'authentification par témoin de connexion interdisant le joker CORS. Y
+lister les deux clients, séparés par des virgules.
+
+Le réseau Docker `network_web` est externe et doit préexister :
+
+```bash
+docker network create network_web
+```
+
 ## Contribuer
 
 Les conventions du projet — format des commits, nommage des branches, standards
