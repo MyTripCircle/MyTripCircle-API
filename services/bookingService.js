@@ -31,7 +31,7 @@ const { getDb } = require("../db");
  *   n'existe pas, l'absence ne devant pas ouvrir de droit par défaut.
  */
 async function checkTripReadAccess(db, tripId, userId) {
-  const trip = await db.collection("trips").findOne({ _id: new ObjectId(String(tripId)) });
+  const trip = await db.collection("trips").findOne({ _id: new ObjectId(tripId) });
   if (!trip) return false;
   const isOwner        = trip.ownerId === userId;
   const isCollaborator = trip.collaborators?.some((c) => c.userId === userId);
@@ -109,7 +109,7 @@ async function getBookingsByTripId(tripId, userId) {
  */
 async function getBookingById(id, userId) {
   const db = getDb();
-  const booking = await db.collection("bookings").findOne({ _id: new ObjectId(String(id)) });
+  const booking = await db.collection("bookings").findOne({ _id: new ObjectId(id) });
   if (!booking) return { error: "Réservation introuvable", status: 404 };
 
   if (booking.tripId) {
@@ -192,13 +192,13 @@ async function createBooking(data, userId) {
  *   droit établi.
  */
 async function checkBookingWriteAccess(db, id, userId, permissionKey = "canEdit") {
-  const booking = await db.collection("bookings").findOne({ _id: new ObjectId(String(id)) });
+  const booking = await db.collection("bookings").findOne({ _id: new ObjectId(id) });
   if (!booking) return { booking: null, hasAccess: false };
 
   if (booking.userId === userId) return { booking, hasAccess: true };
 
   if (booking.tripId) {
-    const trip = await db.collection("trips").findOne({ _id: new ObjectId(String(booking.tripId)) });
+    const trip = await db.collection("trips").findOne({ _id: new ObjectId(booking.tripId) });
     if (trip) {
       const hasAccess =
         trip.ownerId === userId ||
@@ -237,8 +237,8 @@ async function updateBooking(id, data, userId) {
     if (data[key] !== undefined) updates[key] = data[key];
   }
 
-  await db.collection("bookings").updateOne({ _id: new ObjectId(String(id)) }, { $set: updates });
-  const updated = await db.collection("bookings").findOne({ _id: new ObjectId(String(id)) });
+  await db.collection("bookings").updateOne({ _id: new ObjectId(id) }, { $set: updates });
+  const updated = await db.collection("bookings").findOne({ _id: new ObjectId(id) });
   return { booking: updated };
 }
 
@@ -261,7 +261,7 @@ async function deleteBooking(id, userId) {
   if (!booking)   return { error: "Réservation introuvable", status: 404 };
   if (!hasAccess) return { error: "Accès refusé", status: 403 };
 
-  await db.collection("bookings").deleteOne({ _id: new ObjectId(String(id)) });
+  await db.collection("bookings").deleteOne({ _id: new ObjectId(id) });
   return { success: true };
 }
 

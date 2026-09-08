@@ -3,7 +3,16 @@ const { ObjectId } = require("mongodb");
 const { JWT_SECRET } = require("../config");
 const { getDb } = require("../db");
 const { decryptUserFields } = require("../utils/crypto");
+const { readAccessTokenFromCookie } = require("../utils/authCookies");
 const logger = require("../utils/logger");
+
+// L'en-tête reste prioritaire : un client mobile ou un appel serveur explicite
+// doit pouvoir surcharger un éventuel cookie résiduel du navigateur.
+function extractToken(req) {
+  const authHeader = req.headers.authorization;
+  if (authHeader?.startsWith("Bearer ")) return authHeader.split(" ")[1];
+  return readAccessTokenFromCookie(req);
+}
 
 /**
  * Vérifie le jeton d'accès et attache l'utilisateur courant à la requête.
@@ -37,18 +46,17 @@ const logger = require("../utils/logger");
  */
 async function requireAuth(req, res, next) {
   try {
-    const authHeader = req.headers.authorization;
-    if (!authHeader?.startsWith("Bearer ")) {
+    const token = extractToken(req);
+    if (!token) {
       return res.status(401).json({ success: false, error: "Non autorisé" });
     }
 
-    const token = authHeader.split(" ")[1];
     const decoded = jwt.verify(token, JWT_SECRET);
     const userId = typeof decoded === "string" ? decoded : decoded.id;
 
     const user = await getDb()
       .collection("users")
-      .findOne({ _id: new ObjectId(String(userId)) });
+      .findOne({ _id: new ObjectId(userId) });
 
     if (!user) {
       return res.status(401).json({ success: false, error: "Non autorisé" });
@@ -73,4 +81,4 @@ async function requireAuth(req, res, next) {
   }
 }
 
-module.exports = { requireAuth };
+module.exports = { requireAuth, extractToken };

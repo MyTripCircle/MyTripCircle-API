@@ -36,7 +36,7 @@ const { getUserFeatures } = require("../utils/subscriptionHelper");
  *   distinguer l'absence du refus.
  */
 async function checkTripReadAccess(db, tripId, userId) {
-  const trip = await db.collection("trips").findOne({ _id: new ObjectId(String(tripId)) });
+  const trip = await db.collection("trips").findOne({ _id: new ObjectId(tripId) });
   if (!trip) return { trip: null, hasAccess: false };
 
   const isOwner        = trip.ownerId === userId;
@@ -67,7 +67,7 @@ async function checkTripReadAccess(db, tripId, userId) {
  *   établi.
  */
 async function checkTripWriteAccess(db, tripId, userId) {
-  const trip = await db.collection("trips").findOne({ _id: new ObjectId(String(tripId)) });
+  const trip = await db.collection("trips").findOne({ _id: new ObjectId(tripId) });
   if (!trip) return { trip: null, hasAccess: false };
 
   const isOwner        = trip.ownerId === userId;
@@ -280,8 +280,8 @@ async function updateTrip(tripId, data, userId) {
   if (status      !== undefined) updateData.status      = status;
   if (visibility  !== undefined) updateData.visibility  = visibility;
 
-  await db.collection("trips").updateOne({ _id: new ObjectId(String(tripId)) }, { $set: updateData });
-  const updated = await db.collection("trips").findOne({ _id: new ObjectId(String(tripId)) });
+  await db.collection("trips").updateOne({ _id: new ObjectId(tripId) }, { $set: updateData });
+  const updated = await db.collection("trips").findOne({ _id: new ObjectId(tripId) });
   return { trip: updated };
 }
 
@@ -306,14 +306,14 @@ async function updateTrip(tripId, data, userId) {
  */
 async function deleteTrip(tripId, userId) {
   const db = getDb();
-  const trip = await db.collection("trips").findOne({ _id: new ObjectId(String(tripId)) });
+  const trip = await db.collection("trips").findOne({ _id: new ObjectId(tripId) });
   if (!trip) return { error: "Voyage introuvable", status: 404 };
   if (trip.ownerId !== userId) {
     return { error: "Seul le propriétaire peut supprimer ce voyage", status: 403 };
   }
 
   await Promise.all([
-    db.collection("trips").deleteOne({ _id: new ObjectId(String(tripId)) }),
+    db.collection("trips").deleteOne({ _id: new ObjectId(tripId) }),
     db.collection("bookings").deleteMany({ tripId }),
     db.collection("addresses").deleteMany({ tripId }),
     db.collection("invitations").deleteMany({ tripId }),
@@ -342,7 +342,7 @@ async function deleteTrip(tripId, userId) {
  */
 async function removeTripCollaborator(tripId, targetUserId, requesterId) {
   const db = getDb();
-  const trip = await db.collection("trips").findOne({ _id: new ObjectId(String(tripId)) });
+  const trip = await db.collection("trips").findOne({ _id: new ObjectId(tripId) });
   if (!trip) return { error: "Voyage introuvable", status: 404 };
   if (trip.ownerId !== requesterId) {
     return { error: "Seul le propriétaire peut retirer des membres", status: 403 };
@@ -352,7 +352,7 @@ async function removeTripCollaborator(tripId, targetUserId, requesterId) {
   }
 
   await db.collection("trips").updateOne(
-    { _id: new ObjectId(String(tripId)) },
+    { _id: new ObjectId(tripId) },
     { $pull: { collaborators: { userId: targetUserId } } }
   );
   return { success: true };
@@ -389,7 +389,7 @@ async function transferTripOwnership(tripId, newOwnerId, requesterId) {
   const db = getDb();
   if (!newOwnerId) return { error: "newOwnerId requis", status: 400 };
 
-  const trip = await db.collection("trips").findOne({ _id: new ObjectId(String(tripId)) });
+  const trip = await db.collection("trips").findOne({ _id: new ObjectId(tripId) });
   if (!trip) return { error: "Voyage introuvable", status: 404 };
   if (trip.ownerId !== requesterId) {
     return { error: "Seul le propriétaire peut transférer la propriété", status: 403 };
@@ -401,11 +401,11 @@ async function transferTripOwnership(tripId, newOwnerId, requesterId) {
   }
 
   await db.collection("trips").updateOne(
-    { _id: new ObjectId(String(tripId)) },
+    { _id: new ObjectId(tripId) },
     { $set: { ownerId: newOwnerId }, $pull: { collaborators: { userId: newOwnerId } } }
   );
   await db.collection("trips").updateOne(
-    { _id: new ObjectId(String(tripId)) },
+    { _id: new ObjectId(tripId) },
     {
       $push: {
         collaborators: {

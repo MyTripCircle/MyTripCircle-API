@@ -29,6 +29,10 @@ module.exports = {
     "!**/__tests__/**",
     "!jest.config.js",
 
+    // Le rapport HTML produit par Jest lui-même : des scripts de présentation,
+    // pas du code applicatif.
+    "!coverage/**",
+
     // Points d'entrée : validés par les tests d'intégration, qui démarrent
     // l'application plutôt que d'en tester les unités.
     "!index.js",

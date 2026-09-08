@@ -198,8 +198,18 @@ async function _ensureIndexes() {
     await db.collection("subscriptions").createIndex({ userId: 1 }, { unique: true });
     await db.collection("subscriptions").createIndex({ status: 1 });
     await db.collection("subscriptions").createIndex({ endDate: 1 });
+    // Les webhooks Stripe identifient l'abonnement par son id côté PSP
+    await db.collection("subscriptions").createIndex({ stripeSubscriptionId: 1 }, { sparse: true });
   } catch (err) {
     logger.error("[db] Erreur lors de la création des index subscriptions :", err.message);
+  }
+
+  // Web Push : un endpoint = un navigateur, unicité pour l'upsert d'abonnement
+  try {
+    await db.collection("pushSubscriptions").createIndex({ endpoint: 1 }, { unique: true });
+    await db.collection("pushSubscriptions").createIndex({ userId: 1 });
+  } catch (err) {
+    logger.error("[db] Erreur lors de la création des index pushSubscriptions :", err.message);
   }
 
   // RGPD Art. 7 — Consentements : index userId pour lookup rapide + TTL 5 ans

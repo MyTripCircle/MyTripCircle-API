@@ -6,6 +6,9 @@ const { getDb } = require("../db");
 const { authLimiter } = require("../middleware/rateLimiter");
 const { sendPasswordResetEmail } = require("../utils/email");
 const { hashField } = require("../utils/crypto");
+const { htmlPageCsp } = require("../middleware/htmlCsp");
+const { sendSessionResponse } = require("../utils/authCookies");
+const { buildWebAppUrl } = require("../utils/webRedirect");
 const {
   OTP_EXPIRY_MS,
   trimIfString,
@@ -124,7 +127,11 @@ router.post("/reset-password", authLimiter, async (req, res) => {
 
     const accessToken = signAccessToken(user._id);
     const refreshToken = await createRefreshToken(db, user._id);
-    return res.json({ success: true, token: accessToken, refreshToken, user: sanitizeUser(user) });
+    return sendSessionResponse(res, {
+      accessToken,
+      refreshToken,
+      extra: { user: sanitizeUser(user) },
+    });
   } catch (e) {
 
     logger.error("[otp]", e.message);
@@ -133,8 +140,49 @@ router.post("/reset-password", authLimiter, async (req, res) => {
   }
 });
 
+function escapeHtmlAttr(value) {
+  return String(value).replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;");
+}
+
+/**
+ * Page-relais du lien reçu par email : rebondit vers l'app web quand elle est
+ * configurée (WEB_APP_URL), sinon vers le schéma de l'app mobile — comportement
+ * historique conservé pour les déploiements sans front web.
+ * Le script inline est autorisé par le nonce posé par htmlPageCsp.
+ */
+function resetRedirectPage({ nonce, appLink, webLink }) {
+  const target = escapeHtmlAttr(webLink || appLink);
+  const appHref = escapeHtmlAttr(appLink);
+  const webButton = webLink
+    ? `<a class="secondary" href="${escapeHtmlAttr(webLink)}">Continuer dans le navigateur</a>`
+    : "";
+
+  return `<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Réinitialisation du mot de passe</title>
+  <style>
+    body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; margin: 0; background: #F5F0E8; color: #2A2318; }
+    h2 { font-size: 22px; margin-bottom: 12px; }
+    p { color: #7A6A58; margin-bottom: 24px; text-align: center; max-width: 320px; }
+    a { background: #C4714A; color: white; padding: 14px 28px; border-radius: 12px; text-decoration: none; font-size: 16px; margin-bottom: 12px; }
+    a.secondary { background: transparent; color: #C4714A; }
+  </style>
+  <script nonce="${nonce}">window.location.href = "${target}";</script>
+</head>
+<body>
+  <h2>MyTripCircle</h2>
+  <p>Appuyez sur le bouton ci-dessous pour réinitialiser votre mot de passe.</p>
+  <a href="${appHref}">Ouvrir l'application</a>
+  ${webButton}
+</body>
+</html>`;
+}
+
 // GET /users/reset-password-page
-router.get("/reset-password-page", async (req, res) => {
+router.get("/reset-password-page", htmlPageCsp, async (req, res) => {
   const { token } = req.query;
   if (!token) return res.status(400).send(errorPage("Token manquant."));
 
@@ -158,28 +206,13 @@ router.get("/reset-password-page", async (req, res) => {
 
     // Le resetCode est généré par crypto.randomBytes (hex uniquement) — encodage par précaution
     const safeCode = encodeURIComponent(resetCode);
-    const deepLink = `mytripcircle://reset-password?code=${safeCode}`;
-    const escapedDeepLink = deepLink.replaceAll("&", "&amp;").replaceAll('"', "&quot;");
-    return res.send(`<!DOCTYPE html>
-<html lang="fr">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Réinitialisation du mot de passe</title>
-  <style>
-    body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; margin: 0; background: #F5F0E8; color: #2A2318; }
-    h2 { font-size: 22px; margin-bottom: 12px; }
-    p { color: #7A6A58; margin-bottom: 24px; text-align: center; max-width: 320px; }
-    a { background: #C4714A; color: white; padding: 14px 28px; border-radius: 12px; text-decoration: none; font-size: 16px; }
-  </style>
-  <script>window.location.href = "${escapedDeepLink}";</script>
-</head>
-<body>
-  <h2>MyTripCircle</h2>
-  <p>Appuyez sur le bouton ci-dessous pour réinitialiser votre mot de passe dans l'app.</p>
-  <a href="${escapedDeepLink}">Ouvrir l'application</a>
-</body>
-</html>`);
+    return res.send(
+      resetRedirectPage({
+        nonce: res.locals.cspNonce,
+        appLink: `mytripcircle://reset-password?code=${safeCode}`,
+        webLink: buildWebAppUrl("/reset-password", { code: resetCode }),
+      })
+    );
   } catch (e) {
 
     logger.error("[otp]", e.message);

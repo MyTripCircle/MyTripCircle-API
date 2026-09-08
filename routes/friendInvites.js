@@ -46,7 +46,7 @@ router.get("/invite-link/:token", async (req, res) => {
     if (!link) return res.status(404).json({ error: "Lien introuvable" });
     if (link.expiresAt && new Date() > link.expiresAt) return res.status(400).json({ error: "Lien d'invitation expiré" });
 
-    const owner = await db.collection("users").findOne({ _id: new ObjectId(String(link.userId)) });
+    const owner = await db.collection("users").findOne({ _id: new ObjectId(link.userId) });
     if (!owner) return res.status(404).json({ error: "Utilisateur introuvable" });
 
     return res.json({ userId: String(owner._id), name: owner.name ? decrypt(owner.name) : null, avatar: owner.avatar || null });
@@ -77,7 +77,7 @@ router.post("/invite-link/:token/accept", requireAuth, async (req, res) => {
     });
     if (existingFriendship) return res.status(400).json({ error: "Déjà amis" });
 
-    const owner = await db.collection("users").findOne({ _id: new ObjectId(String(ownerId)) });
+    const owner = await db.collection("users").findOne({ _id: new ObjectId(ownerId) });
     if (!owner) return res.status(404).json({ error: "Utilisateur introuvable" });
 
     const now = new Date();

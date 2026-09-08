@@ -19,6 +19,48 @@ const FREE_FEATURES = {
   maxAttachments: 2,
 };
 
+const PREMIUM_FEATURES = {
+  maxTrips: -1,
+  maxCollaborators: -1,
+  canExport: true,
+  prioritySupport: true,
+  maxAttachments: -1,
+};
+
+/**
+ * Persiste un abonnement premium actif. Partagé par l'IAP mobile et Stripe web
+ * pour que la forme du document en base ne dépende pas du canal d'achat.
+ */
+async function upsertPremiumSubscription(db, { userId, platform, productId, endDate, startDate, extra = {} }) {
+  // L'appelant dérive `endDate` de son propre instant de référence. Reprendre
+  // cet instant plutôt qu'en produire un second garantit que la durée persistée
+  // est exactement celle du plan : deux `new Date()` séparés d'une milliseconde
+  // suffisent à la fausser.
+  const now = startDate ? new Date(startDate) : new Date();
+  const subscription = {
+    userId: String(userId),
+    plan: "premium",
+    status: "active",
+    platform,
+    productId,
+    features: PREMIUM_FEATURES,
+    startDate: now,
+    endDate,
+    nextBillingDate: endDate,
+    cancelledAt: null,
+    updatedAt: now,
+    ...extra,
+  };
+
+  await db.collection("subscriptions").updateOne(
+    { userId: String(userId) },
+    { $set: subscription, $setOnInsert: { createdAt: now } },
+    { upsert: true }
+  );
+
+  return subscription;
+}
+
 /**
  * Détermine les quotas en vigueur pour un utilisateur.
  *
@@ -55,4 +97,4 @@ async function getUserFeatures(db, userId) {
   return isActive ? sub.features : { ...FREE_FEATURES };
 }
 
-module.exports = { FREE_FEATURES, getUserFeatures };
+module.exports = { FREE_FEATURES, PREMIUM_FEATURES, getUserFeatures, upsertPremiumSubscription };

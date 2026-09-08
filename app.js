@@ -1,16 +1,21 @@
 const express = require("express");
 const cors = require("cors");
 const helmet = require("helmet");
+const cookieParser = require("cookie-parser");
 
 const logger = require("./utils/logger");
+const { ALLOWED_ORIGINS, IS_PRODUCTION } = require("./config");
 const { generalLimiter } = require("./middleware/rateLimiter");
 const { errorHandler, notFound } = require("./middleware/errorHandler");
 const { auditLog } = require("./middleware/auditLog");
+const { csrfProtection } = require("./middleware/csrf");
+const { CSRF_HEADER } = require("./utils/authCookies");
 
 const { router: authRouter } = require("./routes/auth");
 const oauthRouter = require("./routes/oauth");
 const otpRouter = require("./routes/otp");
 const usersRouter = require("./routes/users");
+const pushRouter = require("./routes/push");
 const tripsRouter = require("./routes/trips");
 const bookingsRouter = require("./routes/bookings");
 const addressesRouter = require("./routes/addresses");
@@ -48,18 +53,30 @@ app.use(helmet({
   hsts: { maxAge: 31536000, includeSubDomains: true, preload: true },
 }));
 
-const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS?.split(",").map((o) => o.trim()) ?? [];
-if (ALLOWED_ORIGINS.length === 0 && process.env.NODE_ENV === "production") {
+if (ALLOWED_ORIGINS.length === 0 && IS_PRODUCTION) {
   logger.warn("[cors] ALLOWED_ORIGINS non configuré — toutes les requêtes CORS navigateur seront bloquées");
 }
 
+// `credentials: true` autorise l'envoi des cookies httpOnly depuis le front web.
+// Combiné à une origine wildcard, il est rejeté par les navigateurs : l'allowlist
+// reste donc stricte (vide = tout bloqué, cf. validateEnv en production).
+// `Cookie` n'est pas listé dans allowedHeaders : c'est un en-tête interdit au JS,
+// posé par le navigateur lui-même, il n'apparaît jamais dans le preflight.
 app.use(cors({
   origin: ALLOWED_ORIGINS,
-  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"],
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization", CSRF_HEADER],
 }));
 
+app.use(cookieParser());
+
+// Stripe signe le corps brut : tout parsing JSON préalable invaliderait la
+// signature. Ce parseur dédié doit rester monté AVANT express.json().
+app.use("/subscriptions/webhook", express.raw({ type: "application/json" }));
+
 app.use(express.json({ limit: "5mb" }));
+app.use(csrfProtection);
 app.use(generalLimiter);
 
 // ─── Logging minimal ──────────────────────────────────────────────────────────
@@ -93,6 +110,7 @@ app.get("/.well-known/assetlinks.json", (_req, res) => {
 app.use("/users", authRouter);
 app.use("/users", oauthRouter);
 app.use("/users", otpRouter);
+app.use("/users", pushRouter);
 app.use("/users", usersRouter);
 app.use("/trips", tripsRouter);
 app.use("/bookings", bookingsRouter);

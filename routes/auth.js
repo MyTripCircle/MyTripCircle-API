@@ -4,7 +4,7 @@ const jwt = require("jsonwebtoken");
 const logger = require("../utils/logger");
 const { ObjectId } = require("mongodb");
 const { getDb } = require("../db");
-const { REFRESH_SECRET } = require("../config");
+const { JWT_SECRET, REFRESH_SECRET } = require("../config");
 const { sendOtpEmail } = require("../utils/email");
 const { authLimiter } = require("../middleware/rateLimiter");
 const { linkPendingFriendRequests } = require("./friends");
@@ -20,6 +20,12 @@ const {
   generateOtp,
 } = require("../utils/authHelpers");
 const { hashField, encryptUserFields, decrypt } = require("../utils/crypto");
+const {
+  sendSessionResponse,
+  clearAuthCookies,
+  readRefreshTokenFromCookie,
+} = require("../utils/authCookies");
+const { extractToken } = require("../middleware/auth");
 
 const router = express.Router();
 
@@ -150,7 +156,11 @@ router.post("/login", authLimiter, async (req, res) => {
 
     const accessToken = signAccessToken(user._id);
     const refreshToken = await createRefreshToken(db, user._id);
-    return res.json({ success: true, token: accessToken, refreshToken, user: sanitizeUser(user) });
+    return sendSessionResponse(res, {
+      accessToken,
+      refreshToken,
+      extra: { user: sanitizeUser(user) },
+    });
   } catch (e) {
 
     logger.error("[auth]", e.message);
@@ -169,7 +179,7 @@ router.post("/verify-otp", authLimiter, async (req, res) => {
       return res.status(400).json({ success: false, error: "userId et otp sont requis" });
     }
 
-    const user = await db.collection("users").findOne({ _id: new ObjectId(String(userId)) });
+    const user = await db.collection("users").findOne({ _id: new ObjectId(userId) });
     if (!user) return res.status(404).json({ success: false, error: "Utilisateur introuvable" });
 
     if (!user.otp || user.otp !== otp) {
@@ -181,16 +191,20 @@ router.post("/verify-otp", authLimiter, async (req, res) => {
     }
 
     await db.collection("users").updateOne(
-      { _id: new ObjectId(String(userId)) },
+      { _id: new ObjectId(userId) },
       { $set: { verified: true, updatedAt: new Date() }, $unset: { otp: "", otpExpiresAt: "" } }
     );
 
     await linkPendingFriendRequests(userId, decrypt(user.email), user.phone ? decrypt(user.phone) : null);
 
-    const updatedUser = await db.collection("users").findOne({ _id: new ObjectId(String(userId)) });
+    const updatedUser = await db.collection("users").findOne({ _id: new ObjectId(userId) });
     const accessToken = signAccessToken(userId);
     const refreshToken = await createRefreshToken(db, userId);
-    return res.json({ success: true, token: accessToken, refreshToken, user: sanitizeUser(updatedUser) });
+    return sendSessionResponse(res, {
+      accessToken,
+      refreshToken,
+      extra: { user: sanitizeUser(updatedUser) },
+    });
   } catch (e) {
 
     logger.error("[auth]", e.message);
@@ -207,7 +221,7 @@ router.post("/resend-otp", authLimiter, async (req, res) => {
 
     if (!userId) return res.status(400).json({ success: false, error: "userId est requis" });
 
-    const user = await db.collection("users").findOne({ _id: new ObjectId(String(userId)) });
+    const user = await db.collection("users").findOne({ _id: new ObjectId(userId) });
     if (!user) return res.status(404).json({ success: false, error: "Utilisateur introuvable" });
     if (user.verified) return res.status(400).json({ success: false, error: "Compte déjà vérifié" });
 
@@ -229,7 +243,9 @@ router.post("/resend-otp", authLimiter, async (req, res) => {
 
 // POST /users/refresh
 router.post("/refresh", async (req, res) => {
-  const { refreshToken } = req.body;
+  // Le navigateur n'a pas accès au refresh token (cookie httpOnly) : il appelle
+  // la route sans corps, le cookie fait foi. Le mobile continue via le body.
+  const refreshToken = req.body?.refreshToken || readRefreshTokenFromCookie(req);
   if (!refreshToken) return res.status(400).json({ success: false, error: "refreshToken requis" });
 
   try {
@@ -244,25 +260,40 @@ router.post("/refresh", async (req, res) => {
     const newRefreshToken = await createRefreshToken(db, payload.id);
 
     const token = signAccessToken(payload.id);
-    return res.json({ success: true, token, refreshToken: newRefreshToken });
+    return sendSessionResponse(res, { accessToken: token, refreshToken: newRefreshToken });
   } catch (e) {
     logger.error("[auth/refresh] Token invalide ou expiré :", e.message);
     return res.status(401).json({ success: false, error: "Token invalide ou expiré" });
   }
 });
 
+// Le cookie de refresh est limité à /users/refresh : il n'est donc pas envoyé
+// sur /users/logout. Sans jeton explicite, on révoque toutes les sessions de
+// l'utilisateur identifié par son access token plutôt que d'en laisser traîner
+// une exploitable pendant 7 jours.
+async function revokeRefreshTokens(req) {
+  const db = getDb();
+  const refreshToken = req.body?.refreshToken || readRefreshTokenFromCookie(req);
+  if (refreshToken) {
+    await db.collection("refreshTokens").deleteOne({ token: hashToken(refreshToken) });
+    return;
+  }
+
+  const accessToken = extractToken(req);
+  if (!accessToken) return;
+  const { id } = jwt.verify(accessToken, JWT_SECRET);
+  await db.collection("refreshTokens").deleteMany({ userId: String(id) });
+}
+
 // POST /users/logout
 router.post("/logout", async (req, res) => {
-  const { refreshToken } = req.body;
-  if (refreshToken) {
-    try {
-      const db = getDb();
-      await db.collection("refreshTokens").deleteOne({ token: hashToken(refreshToken) });
-    } catch (e) {
-      // Silencieux : on déconnecte quoi qu'il arrive
-      logger.warn("[auth/logout] Erreur suppression refresh token :", e.message);
-    }
+  try {
+    await revokeRefreshTokens(req);
+  } catch (e) {
+    // On déconnecte quoi qu'il arrive : les cookies sont effacés ci-dessous.
+    logger.warn("[auth/logout] Révocation du refresh token impossible :", e.message);
   }
+  clearAuthCookies(res);
   return res.json({ success: true });
 });
 

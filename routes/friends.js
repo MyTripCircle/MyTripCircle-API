@@ -31,9 +31,9 @@ async function linkPendingFriendRequests(userId, userEmail, userPhone) {
       { $set: { recipientId: userId } }
     );
 
-    const newUser = await db.collection("users").findOne({ _id: new ObjectId(String(userId)) });
+    const newUser = await db.collection("users").findOne({ _id: new ObjectId(userId) });
     for (const request of pending) {
-      const sender = await db.collection("users").findOne({ _id: new ObjectId(String(request.senderId)) });
+      const sender = await db.collection("users").findOne({ _id: new ObjectId(request.senderId) });
       if (sender) {
         await sendFriendRequestFoundEmail(
           sender.email ? decrypt(sender.email) : null,
@@ -88,7 +88,7 @@ router.get("/suggestions", requireAuth, searchLimiter, async (req, res) => {
     if (validIds.length === 0) return res.json([]);
 
     const users = await db.collection("users").find({
-      _id: { $in: validIds.map((id) => { try { return new ObjectId(String(id)); } catch (e) { logger.warn("[friends] ID invalide ignoré:", e.message); return null; } }).filter(Boolean) },
+      _id: { $in: validIds.map((id) => { try { return new ObjectId(id); } catch (e) { logger.warn("[friends] ID invalide ignoré:", e.message); return null; } }).filter(Boolean) },
     }).project({ _id: 1, name: 1, email: 1, avatar: 1 }).limit(10).toArray();
 
     const suggestions = users.map((u) => ({
@@ -118,7 +118,7 @@ router.get("/", requireAuth, async (req, res) => {
     const friends = await db.collection("friends").find({ userId }).sort({ createdAt: -1 }).skip(skip).limit(limit).toArray();
 
     const friendObjectIds = friends
-      .map((f) => { try { return new ObjectId(String(f.friendId)); } catch (e) { logger.warn("[friends] friendId invalide ignoré:", e.message); return null; } })
+      .map((f) => { try { return new ObjectId(f.friendId); } catch (e) { logger.warn("[friends] friendId invalide ignoré:", e.message); return null; } })
       .filter(Boolean);
 
     const usersData = friendObjectIds.length > 0
@@ -171,7 +171,7 @@ router.get("/:friendId/profile", requireAuth, async (req, res) => {
     const userId = String(req.user._id);
     const { friendId } = req.params;
 
-    const friendUser = await db.collection("users").findOne({ _id: new ObjectId(String(friendId)) });
+    const friendUser = await db.collection("users").findOne({ _id: new ObjectId(friendId) });
     if (!friendUser) return res.status(404).json({ error: "Utilisateur introuvable" });
 
     const friendship = await db.collection("friends").findOne({ userId, friendId });

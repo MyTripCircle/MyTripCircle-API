@@ -122,9 +122,25 @@ describe("server config", () => {
       expect(exitSpy).not.toHaveBeenCalled();
     });
 
+    // Sans allowlist, CORS avec identifiants refuse le joker : l'API démarrerait
+    // en étant inaccessible au navigateur. L'échec au démarrage est préféré.
+    it("should refuse to start in production when no allowed origin is declared", () => {
+      // Arrange
+      process.env.NODE_ENV = "production";
+      delete process.env.ALLOWED_ORIGINS;
+      const { validateEnv } = require("../config");
+
+      // Act & Assert
+      expect(() => validateEnv()).toThrow(`${EXIT_SENTINEL}:1`);
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining("[config] ALLOWED_ORIGINS est vide")
+      );
+    });
+
     it("should warn about env-based secrets when running in production", () => {
       // Arrange
       process.env.NODE_ENV = "production";
+      process.env.ALLOWED_ORIGINS = "https://app.exemple.test";
       const { validateEnv } = require("../config");
 
       // Act
@@ -139,6 +155,7 @@ describe("server config", () => {
     it("should stay silent in production when a secrets provider is configured", () => {
       // Arrange
       process.env.NODE_ENV = "production";
+      process.env.ALLOWED_ORIGINS = "https://app.exemple.test";
       process.env.SECRETS_PROVIDER = "vault";
       const { validateEnv } = require("../config");
 

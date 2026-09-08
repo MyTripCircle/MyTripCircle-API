@@ -48,7 +48,7 @@ function isSelf(senderId, sender, recipientIdParam, recipientEmail, recipientPho
 }
 
 async function findRecipientUser(db, recipientIdParam, recipientEmail, recipientPhone) {
-  if (recipientIdParam) return db.collection("users").findOne({ _id: new ObjectId(String(recipientIdParam)) });
+  if (recipientIdParam) return db.collection("users").findOne({ _id: new ObjectId(recipientIdParam) });
   const byEmail = recipientEmail && await db.collection("users").findOne({ emailHash: hashField(recipientEmail) });
   if (byEmail) return byEmail;
   return recipientPhone ? db.collection("users").findOne({ phoneHash: hashField(recipientPhone) }) : null;
@@ -84,7 +84,7 @@ router.post("/request", requireAuth, async (req, res) => {
       return res.status(400).json({ error: "Email, téléphone ou ID requis" });
     }
 
-    const sender = decryptUserFields(await db.collection("users").findOne({ _id: new ObjectId(String(senderId)) }));
+    const sender = decryptUserFields(await db.collection("users").findOne({ _id: new ObjectId(senderId) }));
 
     if (isSelf(senderId, sender, recipientIdParam, recipientEmail, recipientPhone)) {
       return res.status(400).json({ error: "Impossible de s'envoyer une demande à soi-même" });
@@ -171,7 +171,7 @@ router.get("/requests", requireAuth, async (req, res) => {
       const recipientIdList = sent.map((r) => r.recipientId).filter(Boolean);
       if (recipientIdList.length > 0) {
         const recipientUsers = await db.collection("users").find({
-          _id: { $in: recipientIdList.map((id) => { try { return new ObjectId(String(id)); } catch (e) { logger.warn("[friendRequests] ID invalide ignoré:", e.message); return null; } }).filter(Boolean) },
+          _id: { $in: recipientIdList.map((id) => { try { return new ObjectId(id); } catch (e) { logger.warn("[friendRequests] ID invalide ignoré:", e.message); return null; } }).filter(Boolean) },
         }).project({ _id: 1, name: 1 }).toArray();
         recipientUsers.forEach((u) => { recipientNameMap[String(u._id)] = u.name ? decrypt(u.name) : null; });
       }
@@ -210,7 +210,7 @@ router.put("/requests/:requestId", requireAuth, async (req, res) => {
       return res.status(400).json({ error: "Action invalide" });
     }
 
-    const request = await db.collection("friendRequests").findOne({ _id: new ObjectId(String(requestId)) });
+    const request = await db.collection("friendRequests").findOne({ _id: new ObjectId(requestId) });
     if (!request) return res.status(404).json({ error: "Demande introuvable" });
     if (request.status !== "pending") return res.status(400).json({ error: "Demande déjà traitée" });
 
@@ -219,15 +219,15 @@ router.put("/requests/:requestId", requireAuth, async (req, res) => {
     }
 
     if (action === "decline") {
-      await db.collection("friendRequests").deleteOne({ _id: new ObjectId(String(requestId)) });
+      await db.collection("friendRequests").deleteOne({ _id: new ObjectId(requestId) });
     } else {
       await db.collection("friendRequests").updateOne(
-        { _id: new ObjectId(String(requestId)) },
+        { _id: new ObjectId(requestId) },
         { $set: { status: "accepted", respondedAt: new Date() } }
       );
 
       const now = new Date();
-      const sender = await db.collection("users").findOne({ _id: new ObjectId(String(request.senderId)) });
+      const sender = await db.collection("users").findOne({ _id: new ObjectId(request.senderId) });
       // req.user est déchiffré par le middleware — on re-chiffre pour stocker dans friends
       // sender est un doc brut avec name/email/phone déjà chiffrés — on copie directement
       await db.collection("friends").insertMany([
@@ -253,11 +253,11 @@ router.delete("/requests/:requestId", requireAuth, async (req, res) => {
     const userId = String(req.user._id);
 
     const request = await db.collection("friendRequests").findOne({
-      _id: new ObjectId(String(requestId)), senderId: userId, status: "pending",
+      _id: new ObjectId(requestId), senderId: userId, status: "pending",
     });
     if (!request) return res.status(404).json({ error: "Demande introuvable ou déjà traitée" });
 
-    await db.collection("friendRequests").deleteOne({ _id: new ObjectId(String(requestId)) });
+    await db.collection("friendRequests").deleteOne({ _id: new ObjectId(requestId) });
     return res.json({ success: true });
   } catch (e) {
 

@@ -1,172 +1,20 @@
 const express = require("express");
-const https = require("node:https");
 const { getDb } = require("../db");
 const { requireAuth } = require("../middleware/auth");
 const { iapLimiter } = require("../middleware/rateLimiter");
 const logger = require("../utils/logger");
 const { FREE_FEATURES } = require("../utils/subscriptionHelper");
+const { PLAN_DURATIONS_MS, validateAndPersist } = require("../services/iapService");
+const {
+  isStripeEnabled,
+  createCheckoutSession,
+  createBillingPortalSession,
+  constructWebhookEvent,
+  handleWebhookEvent,
+  cancelAtPeriodEnd,
+} = require("../services/stripeService");
 
 const router = express.Router();
-
-// Durée de chaque plan en millisecondes
-const PLAN_DURATIONS_MS = {
-  "com.myapp.monthly": 30 * 24 * 60 * 60 * 1000,
-  "com.myapp.yearly":  365 * 24 * 60 * 60 * 1000,
-};
-
-const PREMIUM_FEATURES = {
-  maxTrips: -1,
-  maxCollaborators: -1,
-  canExport: true,
-  prioritySupport: true,
-  maxAttachments: -1,
-};
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-// 21007 = reçu sandbox envoyé en prod → retenter en sandbox
-function callAppleEndpoint(hostname, body) {
-  return new Promise((resolve, reject) => {
-    const options = {
-      hostname,
-      path: "/verifyReceipt",
-      method: "POST",
-      headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) },
-    };
-
-    const req = https.request(options, (res) => {
-      let data = "";
-      res.on("data", (chunk) => { data += chunk; });
-      res.on("end", () => {
-        try {
-          const parsed = JSON.parse(data);
-          if (parsed.status === 21007 && hostname === "buy.itunes.apple.com") {
-            return callAppleEndpoint("sandbox.itunes.apple.com", body).then(resolve).catch(reject);
-          }
-          resolve(parsed);
-        } catch (e) {
-          reject(new Error(`Réponse Apple non-JSON : ${e instanceof Error ? e.message : String(e)}`));
-        }
-      });
-    });
-
-    req.on("error", reject);
-    req.write(body);
-    req.end();
-  });
-}
-
-/**
- * Appelle l'API de vérification Apple (StoreKit 1).
- * Essaie d'abord l'endpoint production, retente en sandbox si status 21007.
- */
-function verifyAppleReceipt(receiptData, sharedSecret) {
-  const body = JSON.stringify({
-    "receipt-data": receiptData,
-    password: sharedSecret,
-    "exclude-old-transactions": true,
-  });
-  return callAppleEndpoint("buy.itunes.apple.com", body);
-}
-
-/**
- * Extrait la dernière transaction valide pour un productId depuis la réponse Apple.
- */
-function extractLatestAppleTransaction(appleResponse, productId) {
-  const inApp = appleResponse?.latest_receipt_info || appleResponse?.receipt?.in_app || [];
-  const matching = inApp
-    .filter((t) => t.product_id === productId)
-    .sort((a, b) => Number(b.purchase_date_ms) - Number(a.purchase_date_ms));
-  return matching[0] || null;
-}
-
-function computeSkipValidationEndDate(productId, transactionId, userId, now) {
-  const durationMs = PLAN_DURATIONS_MS[productId];
-  if (durationMs) {
-    logger.warn(`[subscriptions] IAP_SKIP_VALIDATION actif — validation Apple ignorée pour userId=${userId}`);
-    return { endDate: new Date(now.getTime() + durationMs), resolvedTransactionId: transactionId };
-  }
-  throw new Error(`ProductId inconnu : ${productId}`);
-}
-
-/**
- * Calcule la date de fin pour un achat iOS en validant le reçu Apple.
- * Retourne { endDate, resolvedTransactionId }.
- */
-async function computeIosEndDate({ receiptData, productId, transactionId, userId, now }) {
-  if (process.env.IAP_SKIP_VALIDATION === "true") {
-    return computeSkipValidationEndDate(productId, transactionId, userId, now);
-  }
-
-  const sharedSecret = process.env.APPLE_SHARED_SECRET;
-  if (!sharedSecret) throw new Error("APPLE_SHARED_SECRET non configuré");
-
-  const appleResponse = await verifyAppleReceipt(receiptData, sharedSecret);
-
-  // status 0 = valide, 21007 = sandbox (déjà retenté dans verifyAppleReceipt)
-  if (appleResponse.status !== 0) {
-    logger.warn(`[subscriptions] Apple status ${appleResponse.status} pour userId=${userId}`);
-    throw new Error(`Reçu Apple invalide (status ${appleResponse.status})`);
-  }
-
-  const tx = extractLatestAppleTransaction(appleResponse, productId);
-  if (!tx) throw new Error("Transaction introuvable dans le reçu Apple");
-
-  const expiresMs = Number(tx.expires_date_ms);
-  if (!expiresMs || expiresMs <= Date.now()) throw new Error("Abonnement expiré ou invalide");
-
-  return { endDate: new Date(expiresMs), resolvedTransactionId: tx.transaction_id || transactionId };
-}
-
-/**
- * Valide et persiste un achat IAP.
- * En dev (IAP_SKIP_VALIDATION=true), l'appel Apple est bypassé.
- */
-async function validateAndPersist({ userId, receiptData, platform, productId, transactionId }) {
-  const db = getDb();
-  const now = new Date();
-
-  let endDate;
-  let resolvedTransactionId = transactionId;
-
-  if (platform === "ios") {
-    const result = await computeIosEndDate({ receiptData, productId, transactionId, userId, now });
-    endDate = result.endDate;
-    resolvedTransactionId = result.resolvedTransactionId;
-  } else {
-    if (process.env.IAP_SKIP_VALIDATION !== "true") {
-      throw new Error("Validation Google Play non implémentée — achats Android refusés en production");
-    }
-    // Android dev uniquement (IAP_SKIP_VALIDATION=true) : bypass sans vérification Google Play
-    logger.warn(`[subscriptions] IAP_SKIP_VALIDATION actif — validation Google Play ignorée pour userId=${userId}`);
-    const durationMs = PLAN_DURATIONS_MS[productId];
-    if (!durationMs) throw new Error(`ProductId inconnu : ${productId}`);
-    endDate = new Date(now.getTime() + durationMs);
-  }
-
-  const subscription = {
-    userId,
-    plan: "premium",
-    status: "active",
-    platform,
-    productId,
-    transactionId: resolvedTransactionId || null,
-    features: PREMIUM_FEATURES,
-    startDate: now,
-    endDate,
-    nextBillingDate: endDate,
-    cancelledAt: null,
-    updatedAt: now,
-  };
-
-  await db.collection("subscriptions").updateOne(
-    { userId },
-    { $set: subscription, $setOnInsert: { createdAt: now } },
-    { upsert: true }
-  );
-
-  return { ...subscription };
-}
 
 // ─── Routes ──────────────────────────────────────────────────────────────────
 
@@ -257,6 +105,80 @@ router.post("/validate", requireAuth, iapLimiter, async (req, res) => {
   }
 });
 
+// POST /subscriptions/checkout-session — parcours d'achat web (Stripe Checkout)
+router.post("/checkout-session", requireAuth, iapLimiter, async (req, res) => {
+  if (!isStripeEnabled()) {
+    return res.status(503).json({ success: false, error: "Paiement web indisponible" });
+  }
+
+  try {
+    const { productId } = req.body;
+    if (!PLAN_DURATIONS_MS[productId]) {
+      return res.status(400).json({ success: false, error: "ProductId inconnu" });
+    }
+
+    const url = await createCheckoutSession({
+      userId: String(req.user._id),
+      email: req.user.email || null,
+      productId,
+    });
+
+    return res.json({ url });
+  } catch (e) {
+    logger.error("[subscriptions] POST /checkout-session", e.message);
+    return res.status(500).json({ success: false, error: "Création de la session impossible" });
+  }
+});
+
+// POST /subscriptions/billing-portal — portail de gestion Stripe (web)
+router.post("/billing-portal", requireAuth, iapLimiter, async (req, res) => {
+  if (!isStripeEnabled()) {
+    return res.status(503).json({ success: false, error: "Paiement web indisponible" });
+  }
+
+  try {
+    const sub = await getDb()
+      .collection("subscriptions")
+      .findOne({ userId: String(req.user._id) });
+
+    // Un abonnement souscrit sur mobile n'a pas de client Stripe : il se gère
+    // depuis l'App Store ou le Play Store, pas depuis le portail.
+    if (!sub?.stripeCustomerId) {
+      return res.status(404).json({ success: false, error: "Aucun abonnement Stripe à gérer" });
+    }
+
+    const url = await createBillingPortalSession(sub.stripeCustomerId);
+    return res.json({ url });
+  } catch (e) {
+    logger.error("[subscriptions] POST /billing-portal", e.message);
+    return res.status(500).json({ success: false, error: "Ouverture du portail impossible" });
+  }
+});
+
+// POST /subscriptions/webhook — notifications Stripe (corps brut, signé)
+// Monté sans requireAuth : l'authenticité vient de la signature, pas d'une session.
+router.post("/webhook", async (req, res) => {
+  const signature = req.headers["stripe-signature"];
+  if (!signature) return res.status(400).json({ success: false, error: "Signature manquante" });
+
+  let event;
+  try {
+    event = constructWebhookEvent(req.body, signature);
+  } catch (e) {
+    logger.warn("[subscriptions] Webhook Stripe rejeté :", e.message);
+    return res.status(400).json({ success: false, error: "Signature invalide" });
+  }
+
+  try {
+    await handleWebhookEvent(event);
+    return res.json({ received: true });
+  } catch (e) {
+    // 500 volontaire : Stripe réessaiera l'événement.
+    logger.error(`[subscriptions] Traitement du webhook ${event.type} échoué :`, e.message);
+    return res.status(500).json({ success: false, error: "Traitement impossible" });
+  }
+});
+
 // POST /subscriptions/cancel — annuler un abonnement actif
 router.post("/cancel", requireAuth, async (req, res) => {
   try {
@@ -268,6 +190,12 @@ router.post("/cancel", requireAuth, async (req, res) => {
 
     if (sub?.status !== "active") {
       return res.status(400).json({ success: false, error: "Aucun abonnement actif à annuler" });
+    }
+
+    // Côté Stripe, l'annulation doit être programmée chez le PSP : sinon le
+    // prélèvement suivant partirait malgré le statut local.
+    if (sub.stripeSubscriptionId) {
+      await cancelAtPeriodEnd(sub.stripeSubscriptionId);
     }
 
     // Annulation Apple = accès jusqu'à endDate (billing period déjà payé)

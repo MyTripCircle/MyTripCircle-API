@@ -6,9 +6,44 @@ const { APPLE_APP_ID } = require("../config");
 const { authLimiter } = require("../middleware/rateLimiter");
 const { sanitizeUser, signAccessToken, createRefreshToken } = require("../utils/authHelpers");
 const { hashField, encryptUserFields } = require("../utils/crypto");
+const { sendSessionResponse } = require("../utils/authCookies");
+const { resolveReturnTo, buildWebAppUrl } = require("../utils/webRedirect");
 const logger = require("../utils/logger");
 
 const router = express.Router();
+
+// Cible de retour après connexion. Le client peut proposer une URL (`redirectUri`),
+// mais elle n'est jamais reprise telle quelle : seule une origine de l'allowlist
+// est acceptée, sinon la requête est rejetée (redirection ouverte = phishing).
+// Sans URL fournie, on retombe sur WEB_APP_URL — ou sur rien du tout en mobile,
+// où la navigation est gérée par l'app elle-même.
+function resolveOAuthRedirect(requested) {
+  if (requested === undefined || requested === null || requested === "") {
+    return { redirectUrl: buildWebAppUrl("/") };
+  }
+  const redirectUrl = resolveReturnTo(requested);
+  if (!redirectUrl) return { error: "redirectUri non autorisé" };
+  return { redirectUrl };
+}
+
+/**
+ * Réponse commune aux deux fournisseurs : jetons dans le corps (mobile),
+ * cookies httpOnly (navigateur) et URL de retour validée.
+ */
+async function respondWithOAuthSession(res, db, user, { isNewUser, redirectUrl }) {
+  const accessToken = signAccessToken(user._id);
+  const refreshToken = await createRefreshToken(db, user._id);
+
+  return sendSessionResponse(res, {
+    accessToken,
+    refreshToken,
+    extra: {
+      user: sanitizeUser(user),
+      isNewUser,
+      ...(redirectUrl ? { redirectUrl } : {}),
+    },
+  });
+}
 
 // ─── Apple JWKS ───────────────────────────────────────────────────────────────
 
@@ -49,8 +84,11 @@ async function verifyAppleToken(identityToken) {
 
 // POST /users/google
 router.post("/google", authLimiter, async (req, res) => {
-  const { accessToken, mode = "register" } = req.body;
+  const { accessToken, mode = "register", redirectUri } = req.body;
   if (!accessToken) return res.status(400).json({ success: false, error: "Missing accessToken" });
+
+  const { redirectUrl, error: redirectError } = resolveOAuthRedirect(redirectUri);
+  if (redirectError) return res.status(400).json({ success: false, error: redirectError });
 
   try {
     const db = getDb();
@@ -78,16 +116,12 @@ router.post("/google", authLimiter, async (req, res) => {
         })
       );
       user = await db.collection("users").findOne({ _id: result.insertedId });
-      const token = signAccessToken(user._id);
-      const refreshToken = await createRefreshToken(db, user._id);
-      return res.json({ success: true, token, refreshToken, user: sanitizeUser(user), isNewUser: true });
+      return respondWithOAuthSession(res, db, user, { isNewUser: true, redirectUrl });
     } else if (!user.googleId) {
       await db.collection("users").updateOne({ _id: user._id }, { $set: { googleId } });
     }
 
-    const token = signAccessToken(user._id);
-    const refreshToken = await createRefreshToken(db, user._id);
-    return res.json({ success: true, token, refreshToken, user: sanitizeUser(user), isNewUser: false });
+    return respondWithOAuthSession(res, db, user, { isNewUser: false, redirectUrl });
   } catch (e) {
     logger.error("[auth/google] Erreur d'authentification", e.message);
     return res.status(500).json({ success: false, error: "Google authentication failed" });
@@ -96,8 +130,11 @@ router.post("/google", authLimiter, async (req, res) => {
 
 // POST /users/apple
 router.post("/apple", authLimiter, async (req, res) => {
-  const { identityToken, email, fullName, mode = "register" } = req.body;
+  const { identityToken, email, fullName, mode = "register", redirectUri } = req.body;
   if (!identityToken) return res.status(400).json({ success: false, error: "Missing identityToken" });
+
+  const { redirectUrl, error: redirectError } = resolveOAuthRedirect(redirectUri);
+  if (redirectError) return res.status(400).json({ success: false, error: redirectError });
 
   try {
     const db = getDb();
@@ -136,16 +173,12 @@ router.post("/apple", authLimiter, async (req, res) => {
         })
       );
       user = await db.collection("users").findOne({ _id: result.insertedId });
-      const token = signAccessToken(user._id);
-      const refreshToken = await createRefreshToken(db, user._id);
-      return res.json({ success: true, token, refreshToken, user: sanitizeUser(user), isNewUser: true });
+      return respondWithOAuthSession(res, db, user, { isNewUser: true, redirectUrl });
     } else if (!user.appleId) {
       await db.collection("users").updateOne({ _id: user._id }, { $set: { appleId } });
     }
 
-    const token = signAccessToken(user._id);
-    const refreshToken = await createRefreshToken(db, user._id);
-    return res.json({ success: true, token, refreshToken, user: sanitizeUser(user), isNewUser: false });
+    return respondWithOAuthSession(res, db, user, { isNewUser: false, redirectUrl });
   } catch (e) {
     logger.error("[auth/apple] Erreur d'authentification", e.message);
     return res.status(500).json({ success: false, error: "Apple authentication failed" });
