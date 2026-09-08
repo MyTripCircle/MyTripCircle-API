@@ -1,3 +1,16 @@
+/**
+ * Quotas applicables à un compte sans abonnement actif.
+ *
+ * Sert aussi de repli en cas d'abonnement introuvable ou expiré. Le choix de
+ * dégrader vers l'offre gratuite plutôt que de rejeter la requête est
+ * délibéré : une défaillance de la couche d'abonnement ne doit pas priver
+ * l'utilisateur de ses données, seulement des fonctions payantes. L'inverse —
+ * accorder l'offre complète par défaut — ferait d'un incident une distribution
+ * gratuite du service.
+ *
+ * @type {{ maxTrips: number, maxCollaborators: number, canExport: boolean,
+ *   prioritySupport: boolean, maxAttachments: number }}
+ */
 const FREE_FEATURES = {
   maxTrips: 3,
   maxCollaborators: 2,
@@ -6,6 +19,29 @@ const FREE_FEATURES = {
   maxAttachments: 2,
 };
 
+/**
+ * Détermine les quotas en vigueur pour un utilisateur.
+ *
+ * Un abonnement résilié conserve ses droits jusqu'à l'échéance déjà payée :
+ * l'utilisateur a réglé la période, la résiliation ne fait que supprimer la
+ * reconduction. Couper l'accès au moment de la résiliation reviendrait à
+ * facturer un service retiré.
+ *
+ * L'échéance est comparée à l'instant courant à chaque appel plutôt que
+ * matérialisée par une tâche qui basculerait le statut : aucune fenêtre ne
+ * subsiste alors entre l'expiration réelle et sa prise en compte.
+ *
+ * Une copie des quotas gratuits est rendue et non la constante elle-même, pour
+ * qu'un appelant qui modifierait l'objet reçu n'altère pas la référence
+ * partagée par tous les comptes.
+ *
+ * @param {import("mongodb").Db} db Base de données ; passée en paramètre pour
+ *   que la fonction reste testable sans connexion établie.
+ * @param {string} userId Identifiant de l'utilisateur.
+ * @returns {Promise<object>} Quotas applicables. Une valeur `-1` désigne une
+ *   absence de limite.
+ * @throws {Error} Si la lecture en base échoue.
+ */
 async function getUserFeatures(db, userId) {
   const sub = await db.collection("subscriptions").findOne({ userId });
   if (!sub) return { ...FREE_FEATURES };

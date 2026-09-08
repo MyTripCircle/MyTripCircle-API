@@ -2,6 +2,39 @@ const { ObjectId } = require("mongodb");
 const { getDb } = require("../db");
 const { getUserFeatures } = require("../utils/subscriptionHelper");
 
+/**
+ * Opérations métier sur les voyages.
+ *
+ * Le voyage porte le modèle d'autorisation dont dépendent les adresses et les
+ * réservations : il est la seule entité à définir un propriétaire, des
+ * collaborateurs et une visibilité, les autres n'en font que dériver leurs
+ * droits. Toute évolution de ce modèle se répercute donc sur l'ensemble du
+ * domaine.
+ *
+ * Lecture et écriture sont résolues par deux fonctions distinctes plutôt que
+ * par un contrôle paramétré. Elles ne diffèrent pas seulement par un degré : la
+ * lecture admet la visibilité publique et le lien d'amitié, que l'écriture
+ * ignore entièrement. Les fusionner rendrait probable qu'un assouplissement
+ * pensé pour la lecture ouvre par mégarde un droit d'écriture.
+ *
+ * @module services/tripService
+ */
+
+/**
+ * Établit le droit de lire un voyage.
+ *
+ * Quatre titres l'ouvrent : la propriété, la collaboration, la visibilité
+ * publique et, pour la visibilité « amis », un lien d'amitié vérifié en base.
+ * Ce dernier n'est évalué qu'en dernier recours, la lecture supplémentaire
+ * qu'il impose étant inutile dès qu'un autre titre suffit.
+ *
+ * @param {import("mongodb").Db} db Base de données.
+ * @param {string} tripId Identifiant du voyage.
+ * @param {string} userId Identifiant du demandeur.
+ * @returns {Promise<{ trip: object|null, hasAccess: boolean }>} Voyage et droit
+ *   établi. Le document est rendu même en cas de refus, l'appelant devant
+ *   distinguer l'absence du refus.
+ */
 async function checkTripReadAccess(db, tripId, userId) {
   const trip = await db.collection("trips").findOne({ _id: new ObjectId(String(tripId)) });
   if (!trip) return { trip: null, hasAccess: false };
@@ -19,6 +52,20 @@ async function checkTripReadAccess(db, tripId, userId) {
   return { trip, hasAccess: false };
 }
 
+/**
+ * Établit le droit de modifier un voyage.
+ *
+ * Ni la visibilité publique ni le lien d'amitié n'entrent en compte : rendre un
+ * voyage consultable est une décision de partage, jamais une délégation
+ * d'écriture. Seuls le propriétaire et les collaborateurs explicitement dotés
+ * de la permission d'édition sont admis.
+ *
+ * @param {import("mongodb").Db} db Base de données.
+ * @param {string} tripId Identifiant du voyage.
+ * @param {string} userId Identifiant du demandeur.
+ * @returns {Promise<{ trip: object|null, hasAccess: boolean }>} Voyage et droit
+ *   établi.
+ */
 async function checkTripWriteAccess(db, tripId, userId) {
   const trip = await db.collection("trips").findOne({ _id: new ObjectId(String(tripId)) });
   if (!trip) return { trip: null, hasAccess: false };
@@ -28,6 +75,25 @@ async function checkTripWriteAccess(db, tripId, userId) {
   return { trip, hasAccess: isOwner || isCollaborator };
 }
 
+/**
+ * Complète une liste de voyages par leurs compteurs de contenu.
+ *
+ * Les compteurs sont recalculés par agrégation à la demande plutôt que
+ * maintenus dans le document du voyage. Un compteur dénormalisé exigerait une
+ * mise à jour à chaque écriture sur les réservations et les adresses, y compris
+ * lors des suppressions en cascade, et dériverait de la réalité au premier
+ * chemin oublié — sans que rien ne le signale, un compteur faux ayant
+ * exactement l'apparence d'un compteur juste.
+ *
+ * Les deux agrégations portent sur l'ensemble des identifiants et sont lancées
+ * de front, ce qui borne le coût à deux requêtes quel que soit le nombre de
+ * voyages.
+ *
+ * @param {object[]} trips Voyages à compléter.
+ * @param {import("mongodb").Db} db Base de données.
+ * @returns {Promise<object[]>} Copies des voyages portant `stats`. L'entrée
+ *   n'est pas modifiée.
+ */
 async function enrichTripsWithStats(trips, db) {
   if (trips.length === 0) return trips;
   const tripIds = trips.map((t) => t._id.toString());
@@ -53,6 +119,19 @@ async function enrichTripsWithStats(trips, db) {
   }));
 }
 
+/**
+ * Rend les voyages auxquels un utilisateur participe.
+ *
+ * Le périmètre se limite à la propriété et à la collaboration : les voyages
+ * publics ou visibles entre amis sont consultables mais n'ont pas à encombrer
+ * la liste personnelle, qui répond à la question de ce que l'utilisateur
+ * organise et non de ce à quoi il a accès.
+ *
+ * @param {string} userId Identifiant de l'utilisateur.
+ * @returns {Promise<object[]>} Voyages complétés de leurs compteurs. Tableau
+ *   vide si aucun.
+ * @throws {Error} Si la base n'est pas connectée.
+ */
 async function getTripsForUser(userId) {
   const db = getDb();
   const trips = await db.collection("trips").find({
@@ -61,6 +140,15 @@ async function getTripsForUser(userId) {
   return enrichTripsWithStats(trips, db);
 }
 
+/**
+ * Rend un voyage par son identifiant, sous réserve d'un droit de lecture.
+ *
+ * @param {string} tripId Identifiant du voyage.
+ * @param {string} userId Identifiant du demandeur.
+ * @returns {Promise<{ trip: object } | { error: string, status: number }>}
+ *   Voyage complété de ses compteurs, ou refus qualifié.
+ * @throws {Error} Si la base n'est pas connectée.
+ */
 async function getTripById(tripId, userId) {
   const db = getDb();
   const { trip, hasAccess } = await checkTripReadAccess(db, tripId, userId);
@@ -70,6 +158,29 @@ async function getTripById(tripId, userId) {
   return { trip: enriched };
 }
 
+/**
+ * Crée un voyage pour le compte d'un utilisateur.
+ *
+ * Le quota de l'offre est vérifié côté serveur et non seulement dans
+ * l'interface : c'est le seul contrôle qu'un appel direct à l'API ne contourne
+ * pas. La convention `-1` désigne l'absence de limite et court-circuite le
+ * comptage, qui serait sans objet.
+ *
+ * Les dates sont comparées après remise à minuit pour la borne de début : sans
+ * cette normalisation, un voyage commençant le jour même serait refusé dès lors
+ * que l'heure courante a dépassé minuit, c'est-à-dire toujours.
+ *
+ * La visibilité, lorsqu'elle n'est pas précisée, est déduite du drapeau public
+ * et retombe sur « privé ». Le défaut restrictif est délibéré : un voyage rendu
+ * public par omission ne se rattrape pas une fois consulté.
+ *
+ * @param {object} data Données du voyage.
+ * @param {string} userId Identifiant du propriétaire, issu du contexte
+ *   authentifié.
+ * @returns {Promise<{ trip: object } | { error: string, status: number }>}
+ *   Voyage créé, ou erreur de validation, de quota ou de cohérence des dates.
+ * @throws {Error} Si la base n'est pas connectée.
+ */
 async function createTrip(data, userId) {
   const db = getDb();
   const { title, description, destination, startDate, endDate, isPublic, visibility, tags, status, coverImage } = data;
@@ -128,6 +239,25 @@ async function createTrip(data, userId) {
   return { trip };
 }
 
+/**
+ * Met à jour un voyage.
+ *
+ * La contrainte de date antérieure imposée à la création n'est pas reprise
+ * ici : un voyage en cours ou passé doit rester corrigible, et l'appliquer
+ * empêcherait de rectifier après coup une saisie erronée. Seule la cohérence
+ * entre début et fin reste vérifiée.
+ *
+ * Les champs modifiables sont énumérés explicitement ; propriété,
+ * collaborateurs et compteurs en sont absents et relèvent d'opérations
+ * dédiées, qui portent leurs propres contrôles.
+ *
+ * @param {string} tripId Identifiant du voyage.
+ * @param {object} data Champs à modifier, tous facultatifs.
+ * @param {string} userId Identifiant du demandeur.
+ * @returns {Promise<{ trip: object } | { error: string, status: number }>}
+ *   Voyage mis à jour, ou refus qualifié.
+ * @throws {Error} Si la base n'est pas connectée.
+ */
 async function updateTrip(tripId, data, userId) {
   const db = getDb();
   const { trip, hasAccess } = await checkTripWriteAccess(db, tripId, userId);
@@ -155,6 +285,25 @@ async function updateTrip(tripId, data, userId) {
   return { trip: updated };
 }
 
+/**
+ * Supprime un voyage et tout ce qui s'y rattache.
+ *
+ * Réservé au propriétaire, sans égard aux permissions accordées : la
+ * suppression détruit aussi le travail des collaborateurs, ce qu'une permission
+ * d'édition ne saurait autoriser.
+ *
+ * Réservations, adresses et invitations sont supprimées dans le même passage.
+ * Les laisser subsisterait sous forme de documents rattachés à un voyage
+ * disparu, invisibles de l'interface mais toujours présents en base — des
+ * données personnelles conservées sans finalité ni moyen de les atteindre.
+ *
+ * @param {string} tripId Identifiant du voyage.
+ * @param {string} userId Identifiant du demandeur, qui doit être le
+ *   propriétaire.
+ * @returns {Promise<{ success: true } | { error: string, status: number }>}
+ *   Confirmation, ou refus qualifié.
+ * @throws {Error} Si la base n'est pas connectée.
+ */
 async function deleteTrip(tripId, userId) {
   const db = getDb();
   const trip = await db.collection("trips").findOne({ _id: new ObjectId(String(tripId)) });
@@ -172,6 +321,25 @@ async function deleteTrip(tripId, userId) {
   return { success: true };
 }
 
+/**
+ * Retire un collaborateur d'un voyage.
+ *
+ * Réservé au propriétaire. Le retrait de soi-même est refusé : le propriétaire
+ * ne figure pas parmi les collaborateurs, la demande traduit donc une confusion
+ * dont l'aboutissement laisserait le voyage sans responsable identifié. Quitter
+ * la propriété passe par {@link transferTripOwnership}.
+ *
+ * Les contenus créés par le collaborateur sont conservés : ils appartiennent au
+ * voyage, dont le propriétaire reste titulaire.
+ *
+ * @param {string} tripId Identifiant du voyage.
+ * @param {string} targetUserId Identifiant du collaborateur à retirer.
+ * @param {string} requesterId Identifiant du demandeur, qui doit être le
+ *   propriétaire.
+ * @returns {Promise<{ success: true } | { error: string, status: number }>}
+ *   Confirmation, ou refus qualifié.
+ * @throws {Error} Si la base n'est pas connectée.
+ */
 async function removeTripCollaborator(tripId, targetUserId, requesterId) {
   const db = getDb();
   const trip = await db.collection("trips").findOne({ _id: new ObjectId(String(tripId)) });
@@ -190,6 +358,33 @@ async function removeTripCollaborator(tripId, targetUserId, requesterId) {
   return { success: true };
 }
 
+/**
+ * Transfère la propriété d'un voyage à un collaborateur existant.
+ *
+ * Le bénéficiaire doit déjà être membre. Cette exigence évite qu'un voyage soit
+ * remis à un identifiant arbitraire — compte inexistant, ou tiers n'ayant
+ * jamais consenti à en prendre la charge — ce qui le rendrait définitivement
+ * ingérable, la propriété étant la seule voie de suppression.
+ *
+ * L'ancien propriétaire est rétrogradé en éditeur plutôt qu'exclu : il perdrait
+ * autrement l'accès au voyage qu'il a constitué. La permission de suppression
+ * ne lui est pas laissée, celle-ci suivant désormais la propriété.
+ *
+ * L'opération se déroule en deux mises à jour successives, la seconde
+ * réintroduisant le demandeur parmi les collaborateurs. L'ordre importe : une
+ * modification concurrente entre les deux laisserait le voyage privé de son
+ * ancien propriétaire, situation moins dommageable qu'un voyage sans
+ * propriétaire.
+ *
+ * @param {string} tripId Identifiant du voyage.
+ * @param {string} newOwnerId Identifiant du nouveau propriétaire, qui doit
+ *   figurer parmi les collaborateurs.
+ * @param {string} requesterId Identifiant du demandeur, qui doit être le
+ *   propriétaire courant.
+ * @returns {Promise<{ success: true } | { error: string, status: number }>}
+ *   Confirmation, ou refus qualifié.
+ * @throws {Error} Si la base n'est pas connectée.
+ */
 async function transferTripOwnership(tripId, newOwnerId, requesterId) {
   const db = getDb();
   if (!newOwnerId) return { error: "newOwnerId requis", status: 400 };

@@ -13,6 +13,33 @@ const AUDITED_ROUTES = [
   { method: "DELETE", pattern: /^\/users\/me\/account$/ },
 ];
 
+/**
+ * Consigne les accès aux routes touchant aux données personnelles.
+ *
+ * La liste des routes auditées est explicite plutôt que déduite d'une règle
+ * générale : tout journaliser reviendrait à constituer un historique de
+ * navigation complet, soit un traitement de données personnelles créé pour se
+ * conformer à une obligation de traçabilité. Seuls l'export, la suppression,
+ * la consultation d'annuaire, le recueil de consentement et le changement de
+ * mot de passe sont retenus.
+ *
+ * L'écriture est différée par `setImmediate` afin que la réponse ne dépende pas
+ * de la base d'audit : une indisponibilité de MongoDB doit dégrader la
+ * traçabilité, jamais bloquer l'utilisateur dans l'exercice de ses droits. Pour
+ * la même raison, l'échec d'insertion est journalisé sans être propagé.
+ *
+ * La durée de conservation n'est pas gérée ici mais par l'index TTL d'un an
+ * posé sur `auditLogs.createdAt` dans `db.js`, de sorte que l'expiration
+ * s'applique indépendamment de l'exécution du serveur.
+ *
+ * @param {import("express").Request} req Requête entrante ; `req.user` est lu
+ *   s'il a été renseigné par `requireAuth` en amont.
+ * @param {import("express").Response} res Réponse, non modifiée par ce
+ *   middleware.
+ * @param {import("express").NextFunction} next Passe systématiquement la main,
+ *   que la route soit auditée ou non.
+ * @returns {void}
+ */
 function auditLog(req, res, next) {
   const userId = req.user?._id ? String(req.user._id) : "anonymous";
   const isAudited = AUDITED_ROUTES.some(

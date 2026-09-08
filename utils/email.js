@@ -1,3 +1,19 @@
+/**
+ * Envoi des courriels transactionnels.
+ *
+ * Le transporteur est optionnel : en l'absence d'identifiants, le module reste
+ * chargeable et les envois deviennent silencieusement inopérants. Cette
+ * dégradation est délibérée — elle permet de faire tourner l'environnement de
+ * développement et la suite de tests sans compte de messagerie, et sans qu'un
+ * parcours d'inscription échoue pour cette seule raison.
+ *
+ * Toute valeur d'origine utilisateur insérée dans un corps HTML passe par
+ * {@link escapeHtml}. Un nom ou un message libre non échappé permettrait
+ * d'injecter du balisage dans un courriel envoyé sous l'identité du service.
+ *
+ * @module utils/email
+ */
+
 const nodemailer = require("nodemailer");
 const { MAIL_USER, MAIL_PASS, API_BASE_URL } = require("../config");
 
@@ -29,6 +45,17 @@ const COLORS = {
 
 // ─── Sécurité HTML ────────────────────────────────────────────────────────────
 
+/**
+ * Échappe les caractères significatifs du HTML.
+ *
+ * L'esperluette est traitée en premier : la remplacer après les autres
+ * réécrirait les entités que celles-ci viennent de produire, et laisserait
+ * passer une séquence reconstituable côté client.
+ *
+ * @param {*} str Valeur à insérer dans un corps HTML.
+ * @returns {string} Chaîne échappée. Une valeur non textuelle est convertie,
+ *   une valeur absente devenant une chaîne vide plutôt que le mot « null ».
+ */
 function escapeHtml(str) {
   if (typeof str !== "string") return String(str ?? "");
   return str
@@ -92,6 +119,29 @@ function bold(text) {
 
 // ─── Transport ────────────────────────────────────────────────────────────────
 
+/**
+ * Remet un courriel au transporteur, ou l'ignore si aucun n'est configuré.
+ *
+ * L'issue est toujours rendue sous forme de valeur, jamais d'erreur émise :
+ * l'envoi d'une notification est accessoire au parcours qui le déclenche, et
+ * faire échouer une inscription ou une invitation parce qu'un serveur de
+ * messagerie est indisponible dégraderait le service bien au-delà de
+ * l'incident. Le drapeau `logged` distingue l'absence de transporteur d'un
+ * envoi réellement effectué.
+ *
+ * Le message d'erreur du transporteur est journalisé sans l'adresse
+ * destinataire, celle-ci étant une donnée personnelle qui n'a pas à figurer
+ * dans les journaux.
+ *
+ * @param {string} to Adresse du destinataire.
+ * @param {string} subject Objet du message.
+ * @param {string} html Corps HTML.
+ * @param {string} [text] Version texte, pour les clients qui n'affichent pas le
+ *   HTML.
+ * @returns {Promise<{ success: boolean, logged?: boolean, error?: string }>}
+ *   Issue de l'envoi.
+ * @private
+ */
 async function _send(to, subject, html, text) {
   if (!transporter) {
     return { success: true, logged: true };
@@ -113,6 +163,20 @@ async function _send(to, subject, html, text) {
 
 // ─── Fonctions d'envoi publiques ──────────────────────────────────────────────
 
+/**
+ * Transmet un code de vérification à usage unique.
+ *
+ * Le code est le seul élément de sécurité du message : aucun lien cliquable n'y
+ * figure, afin que l'utilisateur n'apprenne pas à suivre un lien reçu par
+ * courriel dans un contexte d'authentification — habitude sur laquelle repose
+ * l'hameçonnage. La durée de validité est rappelée dans le corps pour que la
+ * péremption soit comprise comme normale et non comme une panne.
+ *
+ * @param {string} to Adresse du destinataire.
+ * @param {string} otp Code produit par `utils/authHelpers.generateOtp`.
+ * @returns {Promise<{ success: boolean, logged?: boolean, error?: string }>}
+ *   Issue de l'envoi.
+ */
 async function sendOtpEmail(to, otp) {
   const html = wrap(`
     ${heading("Votre code de vérification")}
@@ -126,6 +190,23 @@ async function sendOtpEmail(to, otp) {
   return _send(to, "Votre code de vérification MyTripCircle", html);
 }
 
+/**
+ * Transmet le lien de réinitialisation du mot de passe.
+ *
+ * Le lien est aussi reproduit en clair dans le corps : un utilisateur averti
+ * peut ainsi vérifier le domaine avant de cliquer, ce que le bouton seul ne
+ * permet pas. Une version texte accompagne le HTML, ce message étant parfois le
+ * seul moyen de reprendre la main sur un compte — il doit rester exploitable
+ * dans un client qui n'affiche pas le HTML.
+ *
+ * La validité d'une heure, plus courte que celle d'un code de vérification,
+ * tient à ce que ce lien suffit à lui seul à prendre le contrôle du compte.
+ *
+ * @param {string} to Adresse du destinataire.
+ * @param {string} resetToken Jeton de réinitialisation à usage unique.
+ * @returns {Promise<{ success: boolean, logged?: boolean, error?: string }>}
+ *   Issue de l'envoi.
+ */
 async function sendPasswordResetEmail(to, resetToken) {
   const resetLink = `${API_BASE_URL}/reset-password?token=${resetToken}`;
   const html = wrap(`
@@ -141,6 +222,23 @@ async function sendPasswordResetEmail(to, resetToken) {
   return _send(to, "Réinitialisation de votre mot de passe", html, text);
 }
 
+/**
+ * Signale une demande d'ami en attente.
+ *
+ * Le message renvoie vers l'application sans proposer d'action directe : une
+ * acceptation par simple clic dans un courriel s'exécuterait hors de toute
+ * session authentifiée et suffirait à établir un lien social à l'insu du
+ * destinataire.
+ *
+ * Le nom de l'émetteur est échappé : il est librement saisi par un tiers.
+ *
+ * @param {string} to Adresse du destinataire.
+ * @param {string} senderName Nom de la personne à l'origine de la demande.
+ * @param {string} [lang="fr"] Langue du destinataire ; toute valeur autre que
+ *   `"en"` retombe sur le français, langue de référence du produit.
+ * @returns {Promise<{ success: boolean, logged?: boolean, error?: string }>}
+ *   Issue de l'envoi.
+ */
 async function sendFriendRequestEmail(to, senderName, lang = "fr") {
   const isFr = lang !== "en";
   const t = isFr
@@ -164,6 +262,21 @@ async function sendFriendRequestEmail(to, senderName, lang = "fr") {
   return _send(to, t.subject, html);
 }
 
+/**
+ * Informe l'émetteur d'une demande d'ami que son destinataire vient de
+ * s'inscrire.
+ *
+ * Une demande adressée à quelqu'un qui n'a pas encore de compte reste en
+ * attente sans que personne ne puisse la voir. Ce message ferme cette boucle,
+ * qui resterait autrement ouverte indéfiniment du point de vue de l'émetteur.
+ *
+ * @param {string} to Adresse de l'émetteur de la demande initiale.
+ * @param {string} newUserName Nom du nouvel inscrit.
+ * @param {string} [lang="fr"] Langue du destinataire ; toute valeur autre que
+ *   `"en"` retombe sur le français.
+ * @returns {Promise<{ success: boolean, logged?: boolean, error?: string }>}
+ *   Issue de l'envoi.
+ */
 async function sendFriendRequestFoundEmail(to, newUserName, lang = "fr") {
   const isFr = lang !== "en";
   const t = isFr
@@ -186,6 +299,32 @@ async function sendFriendRequestFoundEmail(to, newUserName, lang = "fr") {
   return _send(to, t.subject, html);
 }
 
+/**
+ * Adresse une invitation à rejoindre un voyage.
+ *
+ * Le titre, la destination et le message d'accompagnement sont saisis par
+ * l'invitant et échappés avant insertion ; ce message part vers une adresse qui
+ * n'est pas nécessairement celle d'un utilisateur inscrit, donc vers un
+ * destinataire sur lequel le service n'a aucune prise.
+ *
+ * Les dates sont formatées selon la locale du destinataire et non celle du
+ * serveur : un intervalle lu dans le mauvais ordre jour-mois ferait manquer un
+ * voyage.
+ *
+ * @param {string} to Adresse de l'invité.
+ * @param {object} details Détails de l'invitation.
+ * @param {string} details.inviterName Nom de l'invitant.
+ * @param {string} details.tripTitle Titre du voyage.
+ * @param {string} details.tripDestination Destination.
+ * @param {string|Date} details.tripStartDate Date de début.
+ * @param {string|Date} details.tripEndDate Date de fin.
+ * @param {string} [details.message] Message libre de l'invitant.
+ * @param {string} details.invitationLink Lien d'acceptation, valable sept jours.
+ * @param {string} [lang="fr"] Langue du destinataire ; toute valeur autre que
+ *   `"en"` retombe sur le français.
+ * @returns {Promise<{ success: boolean, logged?: boolean, error?: string }>}
+ *   Issue de l'envoi.
+ */
 async function sendTripInvitationEmail(
   to,
   { inviterName, tripTitle, tripDestination, tripStartDate, tripEndDate, message, invitationLink },
@@ -236,6 +375,25 @@ async function sendTripInvitationEmail(
   return _send(to, t.subject, html);
 }
 
+/**
+ * Remet à l'utilisateur l'intégralité de ses données personnelles.
+ *
+ * Répond au droit à la portabilité de l'article 20 du RGPD, exercé ici à
+ * l'occasion d'une demande de suppression. Le corps HTML n'expose qu'un
+ * récapitulatif chiffré, tandis que la version texte porte l'export JSON
+ * complet : c'est cette dernière qui satisfait l'exigence d'un format
+ * structuré et lisible par machine, un tableau HTML ne s'y prêtant pas.
+ *
+ * L'envoi précède la suppression effective, de sorte que l'utilisateur dispose
+ * de ses données avant qu'elles ne deviennent irrécupérables. Le délai de
+ * rétractation restant est rappelé dans le message.
+ *
+ * @param {string} to Adresse du titulaire du compte.
+ * @param {object} exportData Données rassemblées : `profile`, `trips`,
+ *   `bookings`, `addresses`, `friends`, déjà déchiffrées.
+ * @returns {Promise<{ success: boolean, logged?: boolean, error?: string }>}
+ *   Issue de l'envoi.
+ */
 async function sendDataExportEmail(to, exportData) {
   const profile = exportData.profile || {};
   const tripsCount = (exportData.trips || []).length;
@@ -271,6 +429,18 @@ async function sendDataExportEmail(to, exportData) {
   return _send(to, "Export de vos données personnelles — MyTripCircle", html, text);
 }
 
+/**
+ * Confirme qu'une invitation d'ami a été acceptée.
+ *
+ * Le nom apparaît échappé dans le corps, mais brut dans l'objet : les en-têtes
+ * de message ne sont pas interprétés comme du HTML, et les y échapper afficherait
+ * des entités littérales dans la liste des messages du destinataire.
+ *
+ * @param {string} to Adresse de l'invitant.
+ * @param {string} newFriendName Nom de la personne ayant accepté.
+ * @returns {Promise<{ success: boolean, logged?: boolean, error?: string }>}
+ *   Issue de l'envoi.
+ */
 async function sendFriendJoinedEmail(to, newFriendName) {
   const html = wrap(
     heading("Nouvel ami !") +
