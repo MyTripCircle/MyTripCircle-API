@@ -30,7 +30,7 @@ const {
   hashField,
   encryptUserFields,
   encryptAddressFields,
-} = require("../server/utils/crypto");
+} = require("../utils/crypto");
 
 /** Millisecondes dans une journée, pour dater le jeu relativement à l'instant courant. */
 const DAY_MS = 24 * 60 * 60 * 1000;

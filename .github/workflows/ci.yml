@@ -1,0 +1,38 @@
+name: CI
+
+# Intégration continue : à chaque push sur main et develop et à chaque pull
+# request, installation propre des dépendances, exécution de la suite de tests
+# avec couverture, et audit des dépendances.
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+
+# Annule un run en cours si un nouveau commit est poussé sur la même réf.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Tests & audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: npm
+
+      - name: Installer les dépendances
+        run: npm ci --ignore-scripts
+
+      - name: Tests + couverture
+        run: npm run test:coverage -- --ci
+
+      - name: Audit des dépendances (bloquant sur critique)
+        run: npm audit --audit-level=critical

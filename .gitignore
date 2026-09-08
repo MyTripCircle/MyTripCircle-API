@@ -1,0 +1,32 @@
+# dependencies
+node_modules/
+
+# local env files
+.env
+.env.*
+!.env.example
+
+# tests
+/coverage
+
+# logs
+npm-debug.*
+*.log
+
+# macOS
+.DS_Store
+
+# certificats et clés
+*.pem
+*.p12
+*.key
+
+# outillage IA local
+.claude
+.agents/
+
+# scripts d'exploitation réservés à l'administration
+scripts/grant-premium.js
+scripts/revoke-premium.js
+scripts/add-user.js
+scripts/add-friend.js

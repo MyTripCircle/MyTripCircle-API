@@ -1,0 +1,38 @@
+{
+  "name": "mytripcircle-api",
+  "version": "1.0.0",
+  "description": "API MyTripCircle — Express + MongoDB, consommée par les clients mobile et web",
+  "main": "index.js",
+  "private": true,
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js",
+    "seed": "node scripts/seed.js",
+    "seed:dataset": "node scripts/seed-dataset.js",
+    "test-db": "node scripts/test-connection.js",
+    "mongo": "node scripts/mongo-cli.js",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage"
+  },
+  "dependencies": {
+    "bcrypt": "^6.0.0",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.3",
+    "express": "^5.1.0",
+    "express-rate-limit": "^8.3.2",
+    "helmet": "^8.1.0",
+    "ical-generator": "^10.2.0",
+    "jsonwebtoken": "^9.0.3",
+    "mongodb": "^6.20.0",
+    "nodemailer": "^9.0.5"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "mongodb-memory-server": "^11.2.0",
+    "supertest": "^7.1.4"
+  }
+}
