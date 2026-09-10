@@ -1,5 +1,6 @@
 const { ObjectId } = require("mongodb");
 const { getDb } = require("../db");
+const { isTripPublic } = require("../utils/tripVisibility");
 
 /**
  * Opérations métier sur les réservations d'un voyage.
@@ -35,8 +36,7 @@ async function checkTripReadAccess(db, tripId, userId) {
   if (!trip) return false;
   const isOwner        = trip.ownerId === userId;
   const isCollaborator = trip.collaborators?.some((c) => c.userId === userId);
-  const isPublic       = trip.isPublic || trip.visibility === "public";
-  if (isOwner || isCollaborator || isPublic) return true;
+  if (isOwner || isCollaborator || isTripPublic(trip)) return true;
   if (trip.visibility === "friends") {
     const friendship = await db.collection("friends").findOne({ userId, friendId: trip.ownerId });
     return !!friendship;

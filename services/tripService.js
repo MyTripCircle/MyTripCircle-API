@@ -1,6 +1,12 @@
 const { ObjectId } = require("mongodb");
 const { getDb } = require("../db");
 const { getUserFeatures } = require("../utils/subscriptionHelper");
+const {
+  effectiveVisibility,
+  isTripPublic,
+  requestedVisibility,
+  isValidVisibility,
+} = require("../utils/tripVisibility");
 
 /**
  * Opérations métier sur les voyages.
@@ -41,9 +47,8 @@ async function checkTripReadAccess(db, tripId, userId) {
 
   const isOwner        = trip.ownerId === userId;
   const isCollaborator = trip.collaborators?.some((c) => c.userId === userId);
-  const isPublic       = trip.isPublic || trip.visibility === "public";
 
-  if (isOwner || isCollaborator || isPublic) return { trip, hasAccess: true };
+  if (isOwner || isCollaborator || isTripPublic(trip)) return { trip, hasAccess: true };
 
   if (trip.visibility === "friends") {
     const friendship = await db.collection("friends").findOne({ userId, friendId: trip.ownerId });
@@ -172,7 +177,9 @@ async function getTripById(tripId, userId) {
  *
  * La visibilité, lorsqu'elle n'est pas précisée, est déduite du drapeau public
  * et retombe sur « privé ». Le défaut restrictif est délibéré : un voyage rendu
- * public par omission ne se rattrape pas une fois consulté.
+ * public par omission ne se rattrape pas une fois consulté. Le drapeau est
+ * ensuite recalculé depuis la visibilité retenue, pour que les deux champs ne
+ * naissent jamais divergents.
  *
  * @param {object} data Données du voyage.
  * @param {string} userId Identifiant du propriétaire, issu du contexte
@@ -187,6 +194,11 @@ async function createTrip(data, userId) {
 
   if (!title || !destination || !startDate || !endDate) {
     return { error: "Champs requis manquants", status: 400 };
+  }
+
+  const tripVisibility = requestedVisibility({ visibility, isPublic }) ?? "private";
+  if (!isValidVisibility(tripVisibility)) {
+    return { error: "Visibilité invalide", status: 400 };
   }
 
   const features = await getUserFeatures(db, userId);
@@ -224,8 +236,8 @@ async function createTrip(data, userId) {
     endDate: end,
     ownerId: userId,
     collaborators: [],
-    isPublic: isPublic || false,
-    visibility: visibility || (isPublic ? "public" : "private"),
+    isPublic: tripVisibility === "public",
+    visibility: tripVisibility,
     status: status || "draft",
     tags: tags || [],
     stats: { totalBookings: 0, totalAddresses: 0, totalCollaborators: 0 },
@@ -251,6 +263,15 @@ async function createTrip(data, userId) {
  * collaborateurs et compteurs en sont absents et relèvent d'opérations
  * dédiées, qui portent leurs propres contrôles.
  *
+ * Deux décisions restent réservées au propriétaire, même face à un
+ * collaborateur doté du droit d'édition : valider le voyage (le statut) et
+ * changer sa visibilité. La première fige la planification pour tout le
+ * cercle, la seconde décide de qui peut le lire ; ni l'une ni l'autre ne
+ * relève d'une permission d'édition. Seul un changement effectif est refusé :
+ * le formulaire d'édition renvoie ces champs inchangés à chaque enregistrement,
+ * et un collaborateur doit pouvoir corriger un titre sans se heurter à un refus
+ * (défaut D-23 du registre : cette règle n'était tenue que par l'interface).
+ *
  * @param {string} tripId Identifiant du voyage.
  * @param {object} data Champs à modifier, tous facultatifs.
  * @param {string} userId Identifiant du demandeur.
@@ -270,15 +291,28 @@ async function updateTrip(tripId, data, userId) {
     return { error: "La date de fin doit être après la date de début", status: 400 };
   }
 
+  const nextVisibility = requestedVisibility({ visibility, isPublic });
+  if (nextVisibility !== undefined && !isValidVisibility(nextVisibility)) {
+    return { error: "Visibilité invalide", status: 400 };
+  }
+
+  const changesVisibility = nextVisibility !== undefined && nextVisibility !== effectiveVisibility(trip);
+  const changesStatus     = status !== undefined && status !== trip.status;
+  if ((changesVisibility || changesStatus) && trip.ownerId !== userId) {
+    return { error: "Seul le propriétaire peut valider le voyage ou changer sa visibilité", status: 403 };
+  }
+
   const updateData = { updatedAt: new Date() };
   if (title       !== undefined) updateData.title       = title.trim();
   if (description !== undefined) updateData.description = description.trim();
   if (destination !== undefined) updateData.destination = destination.trim();
   if (startDate   !== undefined) updateData.startDate   = new Date(startDate);
   if (endDate     !== undefined) updateData.endDate     = new Date(endDate);
-  if (isPublic    !== undefined) updateData.isPublic    = isPublic;
   if (status      !== undefined) updateData.status      = status;
-  if (visibility  !== undefined) updateData.visibility  = visibility;
+  if (nextVisibility !== undefined) {
+    updateData.visibility = nextVisibility;
+    updateData.isPublic   = nextVisibility === "public";
+  }
 
   await db.collection("trips").updateOne({ _id: new ObjectId(tripId) }, { $set: updateData });
   const updated = await db.collection("trips").findOne({ _id: new ObjectId(tripId) });
