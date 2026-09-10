@@ -126,15 +126,26 @@ describe("tripService", () => {
       expect(result.error).toBeUndefined();
     });
 
-    it("should grant access to anyone when the legacy isPublic flag is set", async () => {
+    it("should grant access to anyone when a legacy trip only carries the isPublic flag", async () => {
       // Arrange
-      mockFakeDb.col("trips").findOne.mockResolvedValue(buildTrip({ isPublic: true }));
+      mockFakeDb.col("trips").findOne.mockResolvedValue(buildTrip({ visibility: undefined, isPublic: true }));
 
       // Act
       const result = await tripService.getTripById(TRIP_ID, OTHER_ID);
 
       // Assert
       expect(result.error).toBeUndefined();
+    });
+
+    it("should deny a stranger when visibility is private even though isPublic is still true", async () => {
+      // Arrange — divergence décrite par le défaut D-01 : l'ancien OU l'aurait rendu public
+      mockFakeDb.col("trips").findOne.mockResolvedValue(buildTrip({ visibility: "private", isPublic: true }));
+
+      // Act
+      const result = await tripService.getTripById(TRIP_ID, OTHER_ID);
+
+      // Assert
+      expect(result).toEqual({ error: "Accès refusé", status: 403 });
     });
 
     it("should grant access when visibility is friends and a friendship exists", async () => {
@@ -275,6 +286,25 @@ describe("tripService", () => {
       // Assert
       expect(trip.visibility).toBe("public");
     });
+
+    it("should derive isPublic from the visibility when only visibility is sent", async () => {
+      // Arrange
+      mockFakeDb.col("subscriptions").findOne.mockResolvedValue(null);
+
+      // Act
+      const { trip } = await tripService.createTrip({ ...validPayload, visibility: "public" }, OWNER_ID);
+
+      // Assert
+      expect(trip).toMatchObject({ visibility: "public", isPublic: true });
+    });
+
+    it("should return a 400 error when the visibility is not part of the enumeration", async () => {
+      // Act
+      const result = await tripService.createTrip({ ...validPayload, visibility: "everyone" }, OWNER_ID);
+
+      // Assert
+      expect(result).toEqual({ error: "Visibilité invalide", status: 400 });
+    });
   });
 
   describe("updateTrip", () => {
@@ -345,6 +375,142 @@ describe("tripService", () => {
 
       // Assert
       expect(result.error).toBeUndefined();
+    });
+
+    describe("owner-only decisions (défaut D-23)", () => {
+      const editorTrip = (overrides = {}) =>
+        buildTrip({
+          status: "draft",
+          collaborators: [{ userId: OTHER_ID, permissions: { canEdit: true } }],
+          ...overrides,
+        });
+      const OWNER_ONLY = {
+        error: "Seul le propriétaire peut valider le voyage ou changer sa visibilité",
+        status: 403,
+      };
+
+      it("should return a 403 error when an editor tries to validate the trip", async () => {
+        // Arrange
+        mockFakeDb.col("trips").findOne.mockResolvedValue(editorTrip());
+
+        // Act
+        const result = await tripService.updateTrip(TRIP_ID, { status: "validated" }, OTHER_ID);
+
+        // Assert
+        expect(result).toEqual(OWNER_ONLY);
+        expect(mockFakeDb.col("trips").updateOne).not.toHaveBeenCalled();
+      });
+
+      it("should return a 403 error when an editor tries to make the trip public", async () => {
+        // Arrange
+        mockFakeDb.col("trips").findOne.mockResolvedValue(editorTrip());
+
+        // Act
+        const result = await tripService.updateTrip(TRIP_ID, { visibility: "public" }, OTHER_ID);
+
+        // Assert
+        expect(result).toEqual(OWNER_ONLY);
+      });
+
+      it("should return a 403 error when an editor flips the legacy isPublic flag", async () => {
+        // Arrange
+        mockFakeDb.col("trips").findOne.mockResolvedValue(editorTrip());
+
+        // Act
+        const result = await tripService.updateTrip(TRIP_ID, { isPublic: true }, OTHER_ID);
+
+        // Assert
+        expect(result).toEqual(OWNER_ONLY);
+      });
+
+      it("should let an editor save the edit form when status and visibility are unchanged", async () => {
+        // Arrange — le formulaire renvoie toujours statut et visibilité, même inchangés
+        mockFakeDb.col("trips").findOne.mockResolvedValue(editorTrip());
+
+        // Act
+        const result = await tripService.updateTrip(
+          TRIP_ID,
+          { title: "Milan", status: "draft", visibility: "private", isPublic: false },
+          OTHER_ID
+        );
+
+        // Assert
+        expect(result.error).toBeUndefined();
+      });
+
+      it("should let the owner validate the trip and change its visibility", async () => {
+        // Arrange
+        mockFakeDb.col("trips").findOne.mockResolvedValue(editorTrip());
+
+        // Act
+        const result = await tripService.updateTrip(
+          TRIP_ID,
+          { status: "validated", visibility: "friends" },
+          OWNER_ID
+        );
+
+        // Assert
+        expect(result.error).toBeUndefined();
+        expect(mockFakeDb.col("trips").updateOne).toHaveBeenCalledWith(
+          { _id: new ObjectId(TRIP_ID) },
+          { $set: { updatedAt: NOW, status: "validated", visibility: "friends", isPublic: false } }
+        );
+      });
+    });
+
+    describe("single source of truth for visibility (défaut D-01)", () => {
+      it("should derive isPublic from visibility so that both fields never diverge", async () => {
+        // Arrange
+        mockFakeDb.col("trips").findOne.mockResolvedValue(buildTrip({ isPublic: true }));
+
+        // Act — ancien défaut : visibility seule mise à jour, isPublic resté à vrai
+        await tripService.updateTrip(TRIP_ID, { visibility: "private" }, OWNER_ID);
+
+        // Assert
+        expect(mockFakeDb.col("trips").updateOne).toHaveBeenCalledWith(
+          { _id: new ObjectId(TRIP_ID) },
+          { $set: { updatedAt: NOW, visibility: "private", isPublic: false } }
+        );
+      });
+
+      it("should let visibility prevail when the payload carries contradictory fields", async () => {
+        // Arrange
+        mockFakeDb.col("trips").findOne.mockResolvedValue(buildTrip());
+
+        // Act
+        await tripService.updateTrip(TRIP_ID, { visibility: "friends", isPublic: true }, OWNER_ID);
+
+        // Assert
+        expect(mockFakeDb.col("trips").updateOne).toHaveBeenCalledWith(
+          { _id: new ObjectId(TRIP_ID) },
+          { $set: { updatedAt: NOW, visibility: "friends", isPublic: false } }
+        );
+      });
+
+      it("should derive the visibility when a legacy caller only sends isPublic", async () => {
+        // Arrange
+        mockFakeDb.col("trips").findOne.mockResolvedValue(buildTrip());
+
+        // Act
+        await tripService.updateTrip(TRIP_ID, { isPublic: true }, OWNER_ID);
+
+        // Assert
+        expect(mockFakeDb.col("trips").updateOne).toHaveBeenCalledWith(
+          { _id: new ObjectId(TRIP_ID) },
+          { $set: { updatedAt: NOW, visibility: "public", isPublic: true } }
+        );
+      });
+
+      it("should return a 400 error when the visibility is not part of the enumeration", async () => {
+        // Arrange
+        mockFakeDb.col("trips").findOne.mockResolvedValue(buildTrip());
+
+        // Act
+        const result = await tripService.updateTrip(TRIP_ID, { visibility: "everyone" }, OWNER_ID);
+
+        // Assert
+        expect(result).toEqual({ error: "Visibilité invalide", status: 400 });
+      });
     });
   });
 

@@ -90,7 +90,7 @@ describe("bookingService", () => {
 
     it("should return the bookings of a public trip to any user", async () => {
       // Arrange
-      mockFakeDb.col("trips").findOne.mockResolvedValue(buildTrip({ isPublic: true }));
+      mockFakeDb.col("trips").findOne.mockResolvedValue(buildTrip({ visibility: "public" }));
       mockFind(mockFakeDb.col("bookings"), []);
 
       // Act

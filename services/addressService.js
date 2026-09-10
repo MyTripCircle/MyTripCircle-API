@@ -1,6 +1,7 @@
 const { ObjectId } = require("mongodb");
 const { getDb } = require("../db");
 const { encryptAddressFields, decryptAddressFields } = require("../utils/crypto");
+const { isTripPublic } = require("../utils/tripVisibility");
 
 /**
  * Opérations métier sur les adresses d'un carnet de voyage.
@@ -239,9 +240,8 @@ async function getAddressesByTripId(tripId, userId) {
 
   const isOwner        = trip.ownerId === userId;
   const isCollaborator = trip.collaborators?.some((c) => c.userId === userId);
-  const isPublic       = trip.isPublic || trip.visibility === "public";
 
-  if (!isOwner && !isCollaborator && !isPublic) {
+  if (!isOwner && !isCollaborator && !isTripPublic(trip)) {
     if (trip.visibility === "friends") {
       const friendship = await db.collection("friends").findOne({ userId, friendId: trip.ownerId });
       if (!friendship) return { error: "Accès refusé", status: 403 };
