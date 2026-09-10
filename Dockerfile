@@ -10,7 +10,15 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts
 
-COPY . .
+# Copie explicite des seuls fichiers d'exécution plutôt que `COPY . .` : le
+# .dockerignore écarte déjà .env, .git et les tests, mais une liste blanche
+# garantit qu'un fichier sensible ajouté plus tard à la racine (clé, export de
+# base, sauvegarde) n'entrera jamais dans l'image (règle Sonar S6470).
+COPY index.js app.js config.js db.js ./
+COPY middleware ./middleware
+COPY routes ./routes
+COPY services ./services
+COPY utils ./utils
 
 # Le processus ne tourne pas en root : une exécution de code arbitraire dans le
 # conteneur n'y obtient alors aucun privilège d'administration.
