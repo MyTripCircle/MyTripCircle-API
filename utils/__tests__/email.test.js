@@ -49,6 +49,7 @@ describe("email", () => {
       // Assert
       expect(mockCreateTransport).toHaveBeenCalledWith({
         service: "gmail",
+        secure: true,
         auth: {
           user: "bot@mytripcircle.test",
           pass: "mot-de-passe-applicatif",

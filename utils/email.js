@@ -20,8 +20,12 @@ const { MAIL_USER, MAIL_PASS, API_BASE_URL } = require("../config");
 let transporter = null;
 
 if (MAIL_USER && MAIL_PASS) {
+  // Le service « gmail » de nodemailer se connecte déjà en TLS implicite
+  // (port 465) ; `secure: true` l'écrit explicitement, pour qu'un changement de
+  // service ou de port ne fasse pas retomber l'envoi sur une connexion en clair.
   transporter = nodemailer.createTransport({
-    service: "gmail", // NOSONAR — nodemailer utilise SMTP+TLS, pas HTTP
+    service: "gmail",
+    secure: true,
     auth: { user: MAIL_USER, pass: MAIL_PASS },
   });
 } else {
