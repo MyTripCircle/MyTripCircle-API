@@ -12,6 +12,7 @@
     "dev": "node --watch index.js",
     "seed": "node scripts/seed.js",
     "seed:dataset": "node scripts/seed-dataset.js",
+    "test-user": "node scripts/create-test-user.js",
     "test-db": "node scripts/test-connection.js",
     "mongo": "node scripts/mongo-cli.js",
     "test": "jest",

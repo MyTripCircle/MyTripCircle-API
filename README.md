@@ -55,7 +55,7 @@ Les routes légales et l'état de santé sont montés à la racine.
 ├── middleware/         # authentification, journal d'audit, quotas, erreurs
 ├── services/           # logique métier réutilisable
 ├── utils/              # chiffrement, courriels, journalisation, validateurs
-├── scripts/            # peuplement et diagnostic de la base
+├── scripts/            # peuplement, diagnostic, compte de test pour k6
 └── __tests__/          # helpers partagés et tests d'intégration
 ```
 
