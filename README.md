@@ -50,8 +50,8 @@ Les routes légales et l'état de santé sont montés à la racine.
 ├── index.js            # point d'entrée, démarrage du serveur
 ├── app.js              # assemblage Express, intergiciels, montage des routes
 ├── config.js           # lecture et validation des variables d'environnement
-├── db.js               # connexion MongoDB
-├── routes/             # 17 routeurs, un par domaine métier
+├── db.js               # connexion MongoDB, validateur de users, index
+├── routes/             # 18 routeurs, un par domaine métier
 ├── middleware/         # authentification, journal d'audit, quotas, erreurs
 ├── services/           # logique métier réutilisable
 ├── utils/              # chiffrement, courriels, journalisation, validateurs
