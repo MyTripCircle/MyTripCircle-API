@@ -137,14 +137,15 @@ describe("Intégration auth — register/login avec MongoDB", () => {
   });
 
   it("should enforce the unique emailHash index at the database level", async () => {
-    // Arrange
+    // Arrange — documents conformes au validateur, pour que seul l'index décide
     const { encryptUserFields } = require("../utils/crypto");
     const users = getDb().collection("users");
-    await users.insertOne(encryptUserFields({ name: "A", email: TEST_USER.email }));
+    const createdAt = new Date();
+    await users.insertOne(encryptUserFields({ name: "A", email: TEST_USER.email, createdAt }));
 
     // Act / Assert : un second document avec le même email viole l'index unique.
     await expect(
-      users.insertOne(encryptUserFields({ name: "B", email: TEST_USER.email }))
+      users.insertOne(encryptUserFields({ name: "B", email: TEST_USER.email, createdAt }))
     ).rejects.toThrow(/duplicate key/i);
   });
 });
