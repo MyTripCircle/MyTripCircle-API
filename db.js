@@ -43,17 +43,46 @@ const TTL_ITINERARY_CACHE_S = 604800;  // 7 jours
  */
 const TTL_ITINERARY_USAGE_S = 86400;   // 24 heures
 
+/**
+ * Contrat de données de la collection `users`, appliqué par le moteur.
+ *
+ * Seuls `name` et `createdAt` sont exigés : ce sont les deux champs présents
+ * quel que soit le mode d'inscription. L'adresse électronique ne l'est pas,
+ * Sign in with Apple pouvant ne pas la transmettre. Aucun motif n'est posé sur
+ * son format : elle est stockée chiffrée (`iv:tag:données`), et un motif
+ * d'adresse rejetterait précisément les documents conformes. Le schéma
+ * contraint le type des champs que le serveur écrit et laisse libres les
+ * autres, pour qu'une fonctionnalité nouvelle n'exige pas de migrer le
+ * validateur.
+ */
+const USERS_SCHEMA = {
+  bsonType: "object",
+  required: ["name", "createdAt"],
+  properties: {
+    name: { bsonType: "string" },
+    email: { bsonType: ["string", "null"] },
+    emailHash: { bsonType: "string" },
+    phone: { bsonType: ["string", "null"] },
+    phoneHash: { bsonType: ["string", "null"] },
+    password: { bsonType: "string" },
+    verified: { bsonType: "bool" },
+    createdAt: { bsonType: "date" },
+    updatedAt: { bsonType: "date" },
+  },
+};
+
 let db;
 let client;
 
 /**
  * Ouvre la connexion, puis met la base en conformité avec le schéma attendu.
  *
- * La création des index et la mise à jour du validateur sont enchaînées ici
+ * La mise en place du validateur et la création des index sont enchaînées ici
  * plutôt que confiées à une migration manuelle : le démarrage du serveur est le
  * seul moment dont on est certain qu'il précède toute écriture, et un
- * déploiement sur une base neuve doit aboutir sans intervention. Les deux
- * étapes sont idempotentes.
+ * déploiement sur une base neuve doit aboutir sans intervention. Le validateur
+ * passe en premier : créer un index sur `users` crée la collection, et elle
+ * naîtrait alors sans validateur. Les deux étapes sont idempotentes.
  *
  * @returns {Promise<void>} Résolue lorsque la base est connectée et prête.
  * @throws {Error} Si la connexion au serveur MongoDB échoue.
@@ -64,8 +93,8 @@ async function connectMongo() {
   db = client.db(DB_NAME);
   logger.info(`[db] Connecté à MongoDB : ${DB_NAME}`);
 
-  await _ensureIndexes();
   await _updateUsersValidator();
+  await _ensureIndexes();
 }
 
 /**
@@ -225,16 +254,28 @@ async function _ensureIndexes() {
 }
 
 /**
- * Aligne le validateur `$jsonSchema` de `users` sur le schéma courant.
+ * Pose le validateur `$jsonSchema` de `users`, ou l'aligne sur le schéma
+ * courant s'il existe déjà.
  *
- * Le validateur est lu avant d'être réécrit, et seule la propriété qui diverge
- * est corrigée : remplacer le schéma entier écraserait les contraintes posées à
- * la création de la collection, que ce module ne connaît pas. La correction
- * porte sur `phone`, devenu facultatif — un validateur qui refuse `null` fait
- * échouer l'effacement du numéro par l'utilisateur, alors que la collection
- * existante en production ne peut pas être recréée.
+ * Trois situations sont distinguées.
  *
- * L'opération est conditionnée à la divergence constatée afin de rester
+ * Sur une base neuve, la collection est créée avec {@link USERS_SCHEMA}, en
+ * niveau `strict` et en rejet : aucun document ne peut y entrer sans respecter
+ * le contrat, et le schéma vit dans le dépôt plutôt que dans une console.
+ *
+ * Si la collection existe sans validateur, le schéma est posé en niveau
+ * `moderate` : les insertions et les documents déjà conformes sont contrôlés,
+ * mais un document antérieur non conforme reste modifiable. Passer d'emblée en
+ * `strict` bloquerait la mise à jour de comptes existants pour une règle qu'ils
+ * n'ont jamais eu à respecter.
+ *
+ * Si un validateur existe, il est lu avant d'être réécrit et seule la
+ * propriété qui diverge est corrigée : remplacer le schéma entier écraserait
+ * les contraintes posées à la création de la collection. La correction porte
+ * sur `phone`, devenu facultatif — un validateur qui refuse `null` fait
+ * échouer l'effacement du numéro par l'utilisateur.
+ *
+ * Chaque branche n'agit que sur un écart constaté, ce qui garde l'opération
  * idempotente au fil des redémarrages. Un échec est journalisé en avertissement
  * et non propagé : le validateur est une garantie supplémentaire, son
  * indisponibilité ne justifie pas de refuser le démarrage.
@@ -248,11 +289,32 @@ async function _updateUsersValidator() {
       .listCollections({ name: "users" }, { nameOnly: false })
       .toArray();
     const info = infos[0];
-    const schema = info?.options?.validator?.$jsonSchema;
+
+    if (!info) {
+      await db.createCollection("users", {
+        validator: { $jsonSchema: USERS_SCHEMA },
+        validationLevel: "strict",
+        validationAction: "error",
+      });
+      logger.info("[db] Collection users créée avec son validateur");
+      return;
+    }
+
+    const schema = info.options?.validator?.$jsonSchema;
+    if (!schema) {
+      await db.command({
+        collMod: "users",
+        validator: { $jsonSchema: USERS_SCHEMA },
+        validationLevel: "moderate",
+        validationAction: "error",
+      });
+      logger.info("[db] Validateur users posé sur la collection existante");
+      return;
+    }
 
     const phoneSchema = schema?.properties?.phone;
     const phoneAllowsNull = Array.isArray(phoneSchema?.bsonType) && phoneSchema.bsonType.includes("null");
-    if (schema?.properties && (!phoneSchema || !phoneAllowsNull)) {
+    if (schema.properties && (!phoneSchema || !phoneAllowsNull)) {
       const nextSchema = {
         ...schema,
         properties: {
