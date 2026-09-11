@@ -173,24 +173,56 @@ describe("Validateur de la collection users", () => {
     ).rejects.toMatchObject({ code: DOCUMENT_VALIDATION_FAILURE });
   });
 
-  it("should only make phone nullable when a validator already exists", async () => {
-    // Arrange — validateur posé hors du serveur, que ce dernier ne connaît pas
-    await admin.db(dbName).createCollection("users", {
-      validator: {
-        $jsonSchema: {
-          bsonType: "object",
-          required: ["email"],
-          properties: { email: { bsonType: "string" }, phone: { bsonType: "string" } },
-        },
-      },
-    });
+  it("should only make phone and email nullable when a validator already exists", async () => {
+    // Arrange — le validateur relevé en production le 11/09, posé hors du
+    // serveur en 2025 : email requis et typé chaîne seule
+    await createProductionValidator();
 
     // Act
     await startDataLayer();
 
     // Assert
     const schema = (await readUsersOptions()).validator.$jsonSchema;
-    expect(schema.required).toEqual(["email"]);
+    expect(schema.required).toEqual(["email", "name", "createdAt"]);
+    expect(schema.properties.email).toEqual({ bsonType: ["string", "null"] });
     expect(schema.properties.phone).toEqual({ bsonType: ["string", "null"] });
   });
+
+  it("should accept a Sign in with Apple user without email once a production validator is aligned", async () => {
+    // Arrange
+    await createProductionValidator();
+    const db = await startDataLayer();
+    const { encryptUserFields } = require("../utils/crypto");
+    const user = encryptUserFields({
+      name: "User",
+      email: null,
+      appleId: "apple-sub",
+      verified: true,
+      createdAt: new Date(),
+    });
+
+    // Act
+    const insertion = db.collection("users").insertOne(user);
+
+    // Assert — avant alignement, le moteur rejetait ce compte (D-24)
+    await expect(insertion).resolves.toHaveProperty("insertedId");
+  });
 });
+
+// Validateur de production tel que relevé le 11/09/2026.
+function createProductionValidator() {
+  return admin.db(dbName).createCollection("users", {
+    validator: {
+      $jsonSchema: {
+        bsonType: "object",
+        required: ["email", "name", "createdAt"],
+        properties: {
+          email: { bsonType: "string" },
+          phone: { bsonType: ["string", "null"] },
+        },
+      },
+    },
+    validationLevel: "strict",
+    validationAction: "error",
+  });
+}

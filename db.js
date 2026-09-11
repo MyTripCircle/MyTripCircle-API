@@ -71,6 +71,17 @@ const USERS_SCHEMA = {
   },
 };
 
+/**
+ * Champs que le serveur peut écrire à `null`, et qu'un validateur existant
+ * doit donc accepter à `null`.
+ *
+ * `phone` : l'utilisateur peut effacer son numéro.
+ * `email` : Sign in with Apple peut ne pas transmettre d'adresse ; un
+ * validateur qui refuse `null` fait alors échouer l'inscription en erreur
+ * serveur (défaut D-24).
+ */
+const NULLABLE_USER_FIELDS = ["phone", "email"];
+
 let db;
 let client;
 
@@ -269,11 +280,11 @@ async function _ensureIndexes() {
  * `strict` bloquerait la mise à jour de comptes existants pour une règle qu'ils
  * n'ont jamais eu à respecter.
  *
- * Si un validateur existe, il est lu avant d'être réécrit et seule la
- * propriété qui diverge est corrigée : remplacer le schéma entier écraserait
- * les contraintes posées à la création de la collection. La correction porte
- * sur `phone`, devenu facultatif — un validateur qui refuse `null` fait
- * échouer l'effacement du numéro par l'utilisateur.
+ * Si un validateur existe, il est lu avant d'être réécrit et seules les
+ * propriétés qui divergent sont corrigées : remplacer le schéma entier
+ * écraserait les contraintes posées à la création de la collection. La
+ * correction porte sur les champs de {@link NULLABLE_USER_FIELDS}, rendus
+ * nullables ; la liste des champs requis n'est pas touchée.
  *
  * Chaque branche n'agit que sur un écart constaté, ce qui garde l'opération
  * idempotente au fil des redémarrages. Un échec est journalisé en avertissement
@@ -312,25 +323,24 @@ async function _updateUsersValidator() {
       return;
     }
 
-    const phoneSchema = schema?.properties?.phone;
-    const phoneAllowsNull = Array.isArray(phoneSchema?.bsonType) && phoneSchema.bsonType.includes("null");
-    if (schema.properties && (!phoneSchema || !phoneAllowsNull)) {
-      const nextSchema = {
-        ...schema,
-        properties: {
-          ...schema.properties,
-          phone: { bsonType: ["string", "null"] },
-        },
-      };
+    const divergent = NULLABLE_USER_FIELDS.filter((field) => {
+      const bsonType = schema.properties?.[field]?.bsonType;
+      return !(Array.isArray(bsonType) && bsonType.includes("null"));
+    });
+    if (schema.properties && divergent.length > 0) {
+      const properties = { ...schema.properties };
+      for (const field of divergent) {
+        properties[field] = { bsonType: ["string", "null"] };
+      }
 
       await db.command({
         collMod: "users",
-        validator: { $jsonSchema: nextSchema },
+        validator: { $jsonSchema: { ...schema, properties } },
         validationLevel: info?.options?.validationLevel || "strict",
         validationAction: info?.options?.validationAction || "error",
       });
 
-      logger.info("[db] Validateur users mis à jour (phone activé)");
+      logger.info(`[db] Validateur users mis à jour (nullables : ${divergent.join(", ")})`);
     }
   } catch (e) {
     logger.warn("[db] Impossible de mettre à jour le validateur users :", e?.message);
