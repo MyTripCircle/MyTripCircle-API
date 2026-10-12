@@ -72,7 +72,7 @@ aucune instance réelle n'est sollicitée.
 ## Déploiement
 
 L'API tourne en conteneur derrière Traefik, qui termine TLS et route
-`mytripcircle-api.enzo-turpin.fr` vers le port 4000.
+`api.mytripcircle.fr` vers le port 4000.
 
 ```bash
 git clone https://github.com/MyTripCircle/MyTripCircle-API.git
