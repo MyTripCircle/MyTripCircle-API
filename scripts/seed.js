@@ -20,7 +20,7 @@
 
 require("dotenv").config();
 const bcrypt = require("bcrypt");
-const { connect, explainConnectionError, missingEnvVars, redactUri } = require("./mongo-cli");
+const { connect, explainConnectionError, missingEnvVars, redactUri, runMain } = require("./mongo-cli");
 const { buildDataset, DEMO_PASSWORD, demoEmailHashes } = require("./seed-dataset");
 
 /** Coût bcrypt appliqué par le serveur à l'inscription ; repris à l'identique. */
@@ -279,14 +279,7 @@ async function main(argv = process.argv.slice(2)) {
 // Comparaison sur le chemin plutôt que sur le module lui-même : `require.main
 // === module` porte sur deux types que l'analyse statique juge disjoints.
 if (require.main?.filename === __filename) {
-  main()
-    .then((code) => {
-      process.exitCode = code;
-    })
-    .catch((err) => {
-      console.error(`❌ Erreur inattendue : ${err.message}`);
-      process.exitCode = 1;
-    });
+  void runMain(main);
 }
 
 module.exports = {

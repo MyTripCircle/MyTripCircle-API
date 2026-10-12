@@ -1,4 +1,4 @@
-const { missingEnvVars, explainConnectionError, redactUri } = require("../mongo-cli");
+const { missingEnvVars, explainConnectionError, redactUri, runMain } = require("../mongo-cli");
 
 describe("missingEnvVars", () => {
   it("should list the connection string when it is absent", () => {
@@ -66,5 +66,44 @@ describe("redactUri", () => {
 
   it("should state that the string is unreadable when the scheme is missing", () => {
     expect(redactUri("127.0.0.1:27017")).toBe("(URI illisible)");
+  });
+});
+
+describe("runMain", () => {
+  const originalExitCode = process.exitCode;
+
+  afterEach(() => {
+    process.exitCode = originalExitCode;
+    jest.restoreAllMocks();
+  });
+
+  it("should report the returned code as exit code when the entry point resolves", async () => {
+    // Act
+    await runMain(() => Promise.resolve(2));
+
+    // Assert
+    expect(process.exitCode).toBe(2);
+  });
+
+  it("should exit with code 1 when the entry point rejects", async () => {
+    // Arrange
+    jest.spyOn(console, "error").mockImplementation(() => {});
+
+    // Act
+    await runMain(() => Promise.reject(new Error("fermeture impossible")));
+
+    // Assert
+    expect(process.exitCode).toBe(1);
+  });
+
+  it("should log the error message when the entry point rejects", async () => {
+    // Arrange
+    const errorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+
+    // Act
+    await runMain(() => Promise.reject(new Error("fermeture impossible")));
+
+    // Assert
+    expect(errorSpy).toHaveBeenCalledWith("❌ Erreur inattendue : fermeture impossible");
   });
 });
