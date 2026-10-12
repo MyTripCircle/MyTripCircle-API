@@ -239,7 +239,7 @@ describe("server config", () => {
       // Assert
       expect(config).toMatchObject({
         DB_NAME: "mytripcircle",
-        API_BASE_URL: "https://mytripcircle-api.enzo-turpin.fr",
+        API_BASE_URL: "https://api.mytripcircle.fr",
         GOOGLE_PLACES_API_KEY: "",
         APPLE_APP_ID: null,
         APPLE_SHARED_SECRET: null,
