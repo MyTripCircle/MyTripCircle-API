@@ -113,6 +113,25 @@ function redactUri(uri) {
   return `${match[1]}${match[2]}`;
 }
 
+/**
+ * Exécute le point d'entrée d'un script et reporte son code de retour comme
+ * code de sortie. Un rejet imprévu est journalisé et traduit en échec, au lieu
+ * d'être laissé sans gestion : la promesse renvoyée ne rejette donc jamais.
+ *
+ * @param {() => Promise<number>} main
+ * @returns {Promise<void>}
+ */
+function runMain(main) {
+  return main()
+    .then((code) => {
+      process.exitCode = code;
+    })
+    .catch((err) => {
+      console.error(`❌ Erreur inattendue : ${err.message}`);
+      process.exitCode = 1;
+    });
+}
+
 module.exports = {
   SERVER_SELECTION_TIMEOUT_MS,
   REQUIRED_VARS,
@@ -121,4 +140,5 @@ module.exports = {
   explainConnectionError,
   connect,
   redactUri,
+  runMain,
 };

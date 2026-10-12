@@ -257,5 +257,35 @@ describe("server config", () => {
       // Assert — seule la chaîne exacte "true" désactive la validation Apple
       expect(config.IAP_SKIP_VALIDATION).toBe(false);
     });
+
+    it("should strip every trailing slash from WEB_APP_URL when it ends with several", () => {
+      // Arrange
+      process.env.WEB_APP_URL = "https://app.mytripcircle.fr///";
+
+      // Act
+      const config = require("../config");
+
+      // Assert
+      expect(config.WEB_APP_URL).toBe("https://app.mytripcircle.fr");
+    });
+
+    it("should keep inner slashes of WEB_APP_URL when it has no trailing slash", () => {
+      // Arrange
+      process.env.WEB_APP_URL = "https://app.mytripcircle.fr/web";
+
+      // Act
+      const config = require("../config");
+
+      // Assert
+      expect(config.WEB_APP_URL).toBe("https://app.mytripcircle.fr/web");
+    });
+
+    it("should expose an empty WEB_APP_URL when the variable is absent", () => {
+      // Act
+      const config = require("../config");
+
+      // Assert
+      expect(config.WEB_APP_URL).toBe("");
+    });
   });
 });
