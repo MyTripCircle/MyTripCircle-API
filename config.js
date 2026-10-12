@@ -88,8 +88,7 @@ module.exports = {
   REFRESH_SECRET: process.env.REFRESH_SECRET,
   MAIL_USER: process.env.MAIL_USER,
   MAIL_PASS: process.env.MAIL_PASS,
-  API_BASE_URL:
-    process.env.API_BASE_URL || "https://mytripcircle-api.enzo-turpin.fr",
+  API_BASE_URL: process.env.API_BASE_URL || "https://api.mytripcircle.fr",
   GROQ_API_KEY: process.env.GROQ_API_KEY,
   GOOGLE_PLACES_API_KEY: process.env.GOOGLE_PLACES_API_KEY || "",
   // Bundle ID de l'app iOS — utilisé pour valider l'audience des tokens Apple
