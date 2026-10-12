@@ -122,8 +122,9 @@ async function purgeDeletedAccounts() {
  * @returns {void}
  */
 function startCleanupJob() {
-  // Exécution immédiate au démarrage, puis toutes les 24h
-  purgeDeletedAccounts();
+  // Exécution immédiate au démarrage, puis toutes les 24h. `void` : la purge
+  // capture et journalise ses propres erreurs, sa promesse ne rejette jamais.
+  void purgeDeletedAccounts();
   setInterval(purgeDeletedAccounts, CLEANUP_INTERVAL_MS);
   logger.info("[cleanup] Job de nettoyage démarré (intervalle: 24h)");
 }
