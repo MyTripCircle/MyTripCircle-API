@@ -189,9 +189,14 @@ async function main() {
 // Comparaison sur le chemin plutôt que sur le module lui-même : `require.main
 // === module` porte sur deux types que l'analyse statique juge disjoints.
 if (require.main?.filename === __filename) {
-  main().then((code) => {
-    process.exitCode = code;
-  });
+  main()
+    .then((code) => {
+      process.exitCode = code;
+    })
+    .catch((err) => {
+      console.error(`❌ Erreur inattendue : ${err.message}`);
+      process.exitCode = 1;
+    });
 }
 
 module.exports = { CRITICAL_INDEXES, sameKey, findMissingIndexes, inspect, formatReport, main };

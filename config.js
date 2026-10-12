@@ -13,6 +13,14 @@ const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || "")
   .map((o) => o.trim())
   .filter(Boolean);
 
+// Parcours en boucle plutôt qu'une expression `/\/+$/` : une chaîne faite de
+// nombreux « / » non finaux déclencherait un retour arrière quadratique.
+function stripTrailingSlashes(url) {
+  let end = url.length;
+  while (end > 0 && url[end - 1] === "/") end -= 1;
+  return url.slice(0, end);
+}
+
 // Mapping productId applicatif → price Stripe. Les identifiants produits sont
 // partagés avec l'IAP mobile pour qu'un même abonnement soit décrit pareil
 // quelle que soit la plateforme d'achat.
@@ -101,7 +109,7 @@ module.exports = {
   IAP_SKIP_VALIDATION: process.env.IAP_SKIP_VALIDATION === "true",
   // URL publique du front web — sert de cible de redirection par défaut
   // (OAuth, retour Stripe Checkout, lien de reset de mot de passe)
-  WEB_APP_URL: (process.env.WEB_APP_URL || "").replace(/\/+$/, ""),
+  WEB_APP_URL: stripTrailingSlashes(process.env.WEB_APP_URL || ""),
   // Domaine des cookies d'authentification. À renseigner uniquement quand le
   // front et l'API sont sur des sous-domaines distincts (ex. ".example.com").
   COOKIE_DOMAIN: process.env.COOKIE_DOMAIN || null,
