@@ -17,11 +17,7 @@ services:
       - network_web
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.mytripcircle-api.rule=Host(`mytripcircle-api.enzo-turpin.fr`)"
-      - "traefik.http.routers.mytripcircle-api.entrypoints=websecure"
-      - "traefik.http.routers.mytripcircle-api.tls.certresolver=default"
       - "traefik.http.services.mytripcircle-api.loadbalancer.server.port=4000"
-      # Nouveau domaine : routeur séparé pour que son certificat soit indépendant de l'ancien
       - "traefik.http.routers.mytripcircle-api-fr.rule=Host(`api.mytripcircle.fr`)"
       - "traefik.http.routers.mytripcircle-api-fr.entrypoints=websecure"
       - "traefik.http.routers.mytripcircle-api-fr.tls.certresolver=default"
